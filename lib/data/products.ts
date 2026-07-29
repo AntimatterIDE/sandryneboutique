@@ -42,16 +42,9 @@ export function supabaseConfigured(): boolean {
   );
 }
 
-/** Customer-facing catalog rule: photo(s), stock, and Retail link when Retail is configured. */
+/** Customer-facing catalog rule: at least one photo and available inventory. */
 export function isShoppable(product: Product): boolean {
-  if (product.inventory_count <= 0 || product.images.length === 0) return false;
-  const retailOn = Boolean(
-    process.env.HEARTLAND_RETAIL_SUBDOMAIN &&
-      process.env.HEARTLAND_RETAIL_API_TOKEN &&
-      Number(process.env.HEARTLAND_RETAIL_STATION_ID) > 0
-  );
-  if (retailOn && product.heartland_item_id == null) return false;
-  return true;
+  return product.inventory_count > 0 && product.images.length > 0;
 }
 
 function resolveCollectionFlags(q: ProductQuery): ProductQuery {
@@ -161,12 +154,6 @@ export async function getProductsPage(raw: ProductQuery = {}): Promise<ProductPa
 
   if (shoppableOnly) {
     query = query.gt("inventory_count", 0).not("images", "eq", "{}");
-    const retailOn = Boolean(
-      process.env.HEARTLAND_RETAIL_SUBDOMAIN &&
-        process.env.HEARTLAND_RETAIL_API_TOKEN &&
-        Number(process.env.HEARTLAND_RETAIL_STATION_ID) > 0
-    );
-    if (retailOn) query = query.not("heartland_item_id", "is", null);
   }
   if (q.category) query = query.eq("category", q.category);
   if (q.onSale) query = query.eq("on_sale", true);

@@ -149,8 +149,8 @@ export function FilterBar({
             name="q"
             type="search"
             defaultValue={currentQuery ?? ""}
-            placeholder="Search products, Heartland Item # or ID…"
-            aria-label="Search products by name, Heartland Item number, or internal ID"
+            placeholder="Search products…"
+            aria-label="Search products"
             className="h-11 rounded-none border-r-0 pl-10"
           />
         </div>
