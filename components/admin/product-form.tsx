@@ -172,13 +172,13 @@ export function ProductForm({ product }: ProductFormProps) {
             Heartland Retail
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Enter the Retail item ID (or Item #) and look up to fill name, price, and inventory.
-            Inventory stays synced from Retail; match Item # to your Shopify SKU.
+            Enter the Retail Item # (recommended) or internal item ID to fill name, price, and
+            inventory. Inventory stays synced from Retail; match Item # to your Shopify SKU.
           </p>
         </div>
         <div className="grid gap-4 sm:grid-cols-[1fr_1fr_auto]">
           <div className="space-y-1.5">
-            <Label htmlFor="heartland_item_id">Item ID</Label>
+            <Label htmlFor="heartland_item_id">Internal item ID</Label>
             <Input
               id="heartland_item_id"
               value={heartlandItemId}
@@ -193,7 +193,7 @@ export function ProductForm({ product }: ProductFormProps) {
               id="heartland_public_id"
               value={heartlandPublicId}
               onChange={(e) => setHeartlandPublicId(e.target.value)}
-              placeholder="Matches Shopify SKU"
+              placeholder="e.g. 11907 · matches Shopify SKU"
               className="rounded-none font-mono text-sm"
             />
           </div>

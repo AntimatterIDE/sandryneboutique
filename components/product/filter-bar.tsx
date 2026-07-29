@@ -2,8 +2,9 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
-import { SlidersHorizontal, X } from "lucide-react";
+import { Search, SlidersHorizontal, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -51,6 +52,7 @@ export function FilterBar({
   const searchParams = useSearchParams();
   const [sheetOpen, setSheetOpen] = useState(false);
 
+  const currentQuery = searchParams.get("q");
   const currentSort = searchParams.get("sort") ?? "newest";
   const currentSize = searchParams.get("size");
   const currentColor = searchParams.get("color");
@@ -61,12 +63,14 @@ export function FilterBar({
 
   const navigate = useCallback(
     (patch: {
+      q?: string | null;
       category?: string | null;
       size?: string | null;
       color?: string | null;
       sort?: string | null;
       max?: string | null;
     }) => {
+      const nextQuery = patch.q === undefined ? currentQuery : patch.q;
       const nextCategory =
         patch.category === undefined ? currentCategory : patch.category;
       const nextSize = patch.size === undefined ? currentSize : patch.size;
@@ -84,6 +88,7 @@ export function FilterBar({
 
       router.replace(
         shopHref({
+          q: nextQuery,
           category: nextCategory,
           size: nextSize,
           color: nextColor,
@@ -94,11 +99,20 @@ export function FilterBar({
         { scroll: false }
       );
     },
-    [router, currentCategory, currentSize, currentColor, currentSort, searchParams]
+    [
+      router,
+      currentQuery,
+      currentCategory,
+      currentSize,
+      currentColor,
+      currentSort,
+      searchParams,
+    ]
   );
 
   const activeFilters = useMemo(() => {
     const filters: { key: string; label: string }[] = [];
+    if (currentQuery) filters.push({ key: "q", label: `Search: “${currentQuery}”` });
     if (currentCategory) {
       const label =
         CATEGORIES.find((c) => c.slug === currentCategory)?.label ?? currentCategory;
@@ -110,7 +124,7 @@ export function FilterBar({
       filters.push({ key: "max", label: `Under ${formatPrice(currentMax)}` });
     }
     return filters;
-  }, [currentCategory, currentSize, currentColor, currentMax, searchParams]);
+  }, [currentQuery, currentCategory, currentSize, currentColor, currentMax, searchParams]);
 
   const clearAll = () => {
     router.replace("/shop", { scroll: false });
@@ -119,6 +133,35 @@ export function FilterBar({
 
   return (
     <div className="flex flex-col gap-4">
+      <form
+        className="flex w-full max-w-2xl"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          const query = String(form.get("q") ?? "").trim();
+          navigate({ q: query || null });
+        }}
+      >
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            key={currentQuery ?? ""}
+            name="q"
+            type="search"
+            defaultValue={currentQuery ?? ""}
+            placeholder="Search products, Heartland Item # or ID…"
+            aria-label="Search products by name, Heartland Item number, or internal ID"
+            className="h-11 rounded-none border-r-0 pl-10"
+          />
+        </div>
+        <Button
+          type="submit"
+          className="h-11 rounded-none px-5 text-[11px] tracking-[0.16em] uppercase"
+        >
+          Search
+        </Button>
+      </form>
+
       <div className="flex flex-wrap items-center gap-2 pb-1 -mx-1 px-1 overflow-x-auto">
         <button
           type="button"

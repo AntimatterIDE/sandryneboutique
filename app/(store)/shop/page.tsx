@@ -50,6 +50,7 @@ export default async function ShopPage({ searchParams }: PageProps) {
   const collection = first(sp.category);
   const def = collection ? getCategory(collection) : null;
 
+  const search = first(sp.q)?.trim();
   const sort = (first(sp.sort) as ProductSort | undefined) ?? "newest";
   const size = first(sp.size);
   const color = first(sp.color);
@@ -58,6 +59,7 @@ export default async function ShopPage({ searchParams }: PageProps) {
 
   const baseQuery = {
     collection: def?.slug,
+    search,
     shoppableOnly: true as const,
   };
 
@@ -87,6 +89,7 @@ export default async function ShopPage({ searchParams }: PageProps) {
 
   const hrefForPage = (p: number) =>
     shopHref({
+      q: search,
       category: def?.slug,
       size,
       color,

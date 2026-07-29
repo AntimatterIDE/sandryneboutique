@@ -50,9 +50,9 @@ export function ProductsToolbar() {
         <Input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search name or slug…"
+          placeholder="Search name, slug, Item # or internal ID…"
           className="rounded-none pl-9"
-          aria-label="Search products"
+          aria-label="Search products by name, slug, Heartland Item number, or internal ID"
         />
       </div>
 

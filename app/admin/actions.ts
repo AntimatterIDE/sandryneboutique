@@ -411,7 +411,12 @@ export type HeartlandLookupResult =
   | { ok: true; item: HeartlandItemLookup }
   | { ok: false; message: string };
 
-/** Look up a Heartland Retail item by internal id (or Item # / public_id). */
+/**
+ * Look up a Heartland Retail item by Item # / public_id first, then by
+ * internal id when the value is numeric. Heartland Item # values are often
+ * numeric strings, so treating every number as an internal id causes false
+ * 404s (for example, Item # 11907 is not necessarily GET /items/11907).
+ */
 export async function lookupHeartlandItem(rawId: string): Promise<HeartlandLookupResult> {
   const denied = await requireAdmin();
   if (denied) return { ok: false, message: denied.message };
@@ -424,15 +429,21 @@ export async function lookupHeartlandItem(rawId: string): Promise<HeartlandLooku
   if (!trimmed) return { ok: false, message: "Enter a Heartland item ID or Item #." };
 
   try {
-    let item;
-    if (/^\d+$/.test(trimmed)) {
-      item = await getItem(Number(trimmed));
-    } else {
-      const matches = await searchItemsByPublicId(trimmed);
-      if (matches.length === 0) {
-        return { ok: false, message: `No Heartland item found for “${trimmed}”.` };
+    const matches = await searchItemsByPublicId(trimmed);
+    let item =
+      matches.find((match) => String(match.public_id ?? "") === trimmed) ??
+      matches[0];
+
+    if (!item && /^\d+$/.test(trimmed)) {
+      try {
+        item = await getItem(Number(trimmed));
+      } catch (err) {
+        if (!(err instanceof Error) || !err.message.includes("→ 404:")) throw err;
       }
-      item = matches[0];
+    }
+
+    if (!item) {
+      return { ok: false, message: `No Heartland item found for “${trimmed}”.` };
     }
 
     let inventory_count = 0;

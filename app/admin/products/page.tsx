@@ -97,7 +97,15 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
 
     if (q) {
       const term = q.replace(/[%_,]/g, "");
-      query = query.or(`name.ilike.%${term}%,slug.ilike.%${term}%`);
+      const searchFilters = [
+        `name.ilike.%${term}%`,
+        `slug.ilike.%${term}%`,
+        `heartland_public_id.ilike.%${term}%`,
+      ];
+      if (/^\d+$/.test(term)) {
+        searchFilters.push(`heartland_item_id.eq.${Number(term)}`);
+      }
+      query = query.or(searchFilters.join(","));
     }
     if (category !== "all") query = query.eq("category", category);
     if (stock === "in") query = query.gt("inventory_count", 0);
@@ -108,7 +116,8 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
 
     const from = (page - 1) * ADMIN_PAGE_SIZE;
     const to = from + ADMIN_PAGE_SIZE - 1;
-    const { data, count } = await query.range(from, to);
+    const { data, count, error } = await query.range(from, to);
+    if (error) console.error("Admin product query failed:", error);
     products = (data ?? []) as Product[];
     total = count ?? 0;
   }
@@ -167,6 +176,9 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
                   </div>
                   <div className="min-w-0 flex-1 space-y-1.5">
                     <p className="font-medium leading-snug">{product.name}</p>
+                    <p className="text-xs text-muted-foreground font-mono">
+                      Item # {product.heartland_public_id ?? "—"}
+                    </p>
                     <p className="text-xs text-muted-foreground capitalize">
                       {product.category.replace("-", " & ")} ·{" "}
                       <span
@@ -196,6 +208,7 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
                 <TableRow>
                   <TableHead className="w-16" />
                   <TableHead>Name</TableHead>
+                  <TableHead>Item #</TableHead>
                   <TableHead>Category</TableHead>
                   <TableHead className="text-right">Price</TableHead>
                   <TableHead className="text-right">Inventory</TableHead>
@@ -228,6 +241,9 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
                         {product.name}
                       </Link>
                       <p className="text-xs text-muted-foreground font-mono">{product.slug}</p>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground font-mono">
+                      {product.heartland_public_id ?? "—"}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground capitalize">
                       {product.category.replace("-", " & ")}

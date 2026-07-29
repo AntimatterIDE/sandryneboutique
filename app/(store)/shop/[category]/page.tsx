@@ -18,6 +18,7 @@ export default async function CategoryShopRedirect({ params, searchParams }: Pag
 
   redirect(
     shopHref({
+      q: first(sp.q),
       category: def?.slug,
       size: first(sp.size),
       color: first(sp.color),

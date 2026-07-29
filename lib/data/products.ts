@@ -87,7 +87,16 @@ function applyLocalQuery(products: Product[], raw: ProductQuery): Product[] {
     if (q.color && !p.colors.includes(q.color)) return false;
     if (q.search) {
       const needle = q.search.toLowerCase();
-      const hay = `${p.name} ${p.slug} ${p.description}`.toLowerCase();
+      const hay = [
+        p.name,
+        p.slug,
+        p.description,
+        p.heartland_public_id,
+        p.heartland_item_id,
+      ]
+        .filter((value) => value != null)
+        .join(" ")
+        .toLowerCase();
       if (!hay.includes(needle)) return false;
     }
     const price = effectivePrice(p);
@@ -152,6 +161,12 @@ export async function getProductsPage(raw: ProductQuery = {}): Promise<ProductPa
 
   if (shoppableOnly) {
     query = query.gt("inventory_count", 0).not("images", "eq", "{}");
+    const retailOn = Boolean(
+      process.env.HEARTLAND_RETAIL_SUBDOMAIN &&
+        process.env.HEARTLAND_RETAIL_API_TOKEN &&
+        Number(process.env.HEARTLAND_RETAIL_STATION_ID) > 0
+    );
+    if (retailOn) query = query.not("heartland_item_id", "is", null);
   }
   if (q.category) query = query.eq("category", q.category);
   if (q.onSale) query = query.eq("on_sale", true);
@@ -159,8 +174,16 @@ export async function getProductsPage(raw: ProductQuery = {}): Promise<ProductPa
   if (q.size) query = query.contains("sizes", [q.size]);
   if (q.color) query = query.contains("colors", [q.color]);
   if (q.search?.trim()) {
-    const term = q.search.trim().replace(/[%_]/g, "");
-    query = query.or(`name.ilike.%${term}%,slug.ilike.%${term}%`);
+    const term = q.search.trim().replace(/[%_,]/g, "");
+    const searchFilters = [
+      `name.ilike.%${term}%`,
+      `slug.ilike.%${term}%`,
+      `heartland_public_id.ilike.%${term}%`,
+    ];
+    if (/^\d+$/.test(term)) {
+      searchFilters.push(`heartland_item_id.eq.${Number(term)}`);
+    }
+    query = query.or(searchFilters.join(","));
   }
 
   switch (q.sort) {
