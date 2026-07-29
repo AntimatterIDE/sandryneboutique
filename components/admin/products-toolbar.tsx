@@ -23,6 +23,7 @@ export function ProductsToolbar() {
 
   const category = searchParams.get("category") ?? "all";
   const stock = searchParams.get("stock") ?? "all";
+  const image = searchParams.get("image") ?? "all";
 
   const push = (patch: Record<string, string | null>) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -78,8 +79,17 @@ export function ProductsToolbar() {
           <SelectItem value="in">In stock</SelectItem>
           <SelectItem value="low">Low stock (≤5)</SelectItem>
           <SelectItem value="out">Out of stock</SelectItem>
-          <SelectItem value="has-image">Has image(s)</SelectItem>
-          <SelectItem value="no-image">No image</SelectItem>
+        </SelectContent>
+      </Select>
+
+      <Select value={image} onValueChange={(v) => push({ image: v })}>
+        <SelectTrigger className="rounded-none w-full sm:w-40" aria-label="Filter by images">
+          <SelectValue placeholder="Images" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All images</SelectItem>
+          <SelectItem value="has">Has image(s)</SelectItem>
+          <SelectItem value="none">No image</SelectItem>
         </SelectContent>
       </Select>
 

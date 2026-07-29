@@ -39,12 +39,14 @@ function adminHref(params: {
   q?: string | null;
   category?: string | null;
   stock?: string | null;
+  image?: string | null;
   page?: number;
 }) {
   const sp = new URLSearchParams();
   if (params.q) sp.set("q", params.q);
   if (params.category && params.category !== "all") sp.set("category", params.category);
   if (params.stock && params.stock !== "all") sp.set("stock", params.stock);
+  if (params.image && params.image !== "all") sp.set("image", params.image);
   if (params.page && params.page > 1) sp.set("page", String(params.page));
   const qs = sp.toString();
   return qs ? `/admin/products?${qs}` : "/admin/products";
@@ -80,6 +82,7 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
   const q = first(sp.q)?.trim() ?? "";
   const category = first(sp.category) ?? "all";
   const stock = first(sp.stock) ?? "all";
+  const image = first(sp.image) ?? "all";
   const page = Math.max(1, Number(first(sp.page) ?? "1") || 1);
 
   let products: Product[] = [];
@@ -100,8 +103,8 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
     if (stock === "in") query = query.gt("inventory_count", 0);
     if (stock === "low") query = query.lte("inventory_count", 5);
     if (stock === "out") query = query.eq("inventory_count", 0);
-    if (stock === "has-image") query = query.not("images", "eq", "{}");
-    if (stock === "no-image") query = query.eq("images", "{}");
+    if (image === "has") query = query.not("images", "eq", "{}");
+    if (image === "none") query = query.eq("images", "{}");
 
     const from = (page - 1) * ADMIN_PAGE_SIZE;
     const to = from + ADMIN_PAGE_SIZE - 1;
@@ -119,7 +122,9 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
           <h1 className="font-serif text-3xl tracking-tight">Products</h1>
           <p className="text-sm text-muted-foreground mt-1">
             {total} {total === 1 ? "product" : "products"}
-            {q || category !== "all" || stock !== "all" ? " matching filters" : " in the catalog"}.
+            {q || category !== "all" || stock !== "all" || image !== "all"
+              ? " matching filters"
+              : " in the catalog"}.
           </p>
         </div>
         <Button asChild className="rounded-none tracking-[0.16em] uppercase text-xs gap-2 w-full sm:w-auto">
@@ -265,6 +270,7 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
             q: q || null,
             category,
             stock,
+            image,
             page: p,
           })
         }
