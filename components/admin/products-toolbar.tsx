@@ -78,6 +78,7 @@ export function ProductsToolbar() {
           <SelectItem value="in">In stock</SelectItem>
           <SelectItem value="low">Low stock (≤5)</SelectItem>
           <SelectItem value="out">Out of stock</SelectItem>
+          <SelectItem value="has-image">Has image(s)</SelectItem>
           <SelectItem value="no-image">No image</SelectItem>
         </SelectContent>
       </Select>

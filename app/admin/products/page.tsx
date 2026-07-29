@@ -100,6 +100,7 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
     if (stock === "in") query = query.gt("inventory_count", 0);
     if (stock === "low") query = query.lte("inventory_count", 5);
     if (stock === "out") query = query.eq("inventory_count", 0);
+    if (stock === "has-image") query = query.not("images", "eq", "{}");
     if (stock === "no-image") query = query.eq("images", "{}");
 
     const from = (page - 1) * ADMIN_PAGE_SIZE;
