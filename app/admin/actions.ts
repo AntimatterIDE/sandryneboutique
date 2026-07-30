@@ -11,6 +11,18 @@ export interface ActionResult {
   id?: string;
 }
 
+export type ProductImageUploadResult =
+  | {
+      ok: true;
+      path: string;
+      token: string;
+      publicUrl: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
 const PRODUCT_CATEGORIES = [
   "bottoms",
   "dresses",
@@ -56,6 +68,50 @@ async function requireAdmin(): Promise<ActionResult | null> {
     return { ok: false, message: "You are not authorized to perform this action." };
   }
   return null;
+}
+
+const PRODUCT_IMAGE_EXTENSIONS: Record<string, string> = {
+  "image/avif": "avif",
+  "image/gif": "gif",
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+};
+
+export async function createProductImageUpload(
+  contentType: string,
+  size: number
+): Promise<ProductImageUploadResult> {
+  const denied = await requireAdmin();
+  if (denied) return { ok: false, message: denied.message };
+
+  const extension = PRODUCT_IMAGE_EXTENSIONS[contentType];
+  if (!extension) {
+    return { ok: false, message: "Choose a JPG, PNG, WebP, AVIF, or GIF image." };
+  }
+  if (!Number.isFinite(size) || size <= 0 || size > 10 * 1024 * 1024) {
+    return { ok: false, message: "Images must be smaller than 10MB." };
+  }
+
+  const path = `${crypto.randomUUID()}.${extension}`;
+  const supabase = await createPrivilegedClient();
+  const { data, error } = await supabase.storage
+    .from("product-images")
+    .createSignedUploadUrl(path);
+
+  if (error || !data?.token) {
+    console.error("Product image upload authorization failed:", error);
+    return {
+      ok: false,
+      message: "Could not authorize the image upload. Please try again.",
+    };
+  }
+
+  const {
+    data: { publicUrl },
+  } = supabase.storage.from("product-images").getPublicUrl(path);
+
+  return { ok: true, path, token: data.token, publicUrl };
 }
 
 function validateProduct(input: ProductInput): string | null {

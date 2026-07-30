@@ -6,6 +6,7 @@ import { ArrowLeft, ArrowRight, Loader2, Plus, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { createProductImageUpload } from "@/app/admin/actions";
 import { createClient } from "@/lib/supabase/client";
 
 interface ImageManagerProps {
@@ -31,41 +32,50 @@ export function ImageManager({ images, onChange }: ImageManagerProps) {
     const supabase = createClient();
     const uploaded: string[] = [];
 
-    for (const file of Array.from(files)) {
-      if (!file.type.startsWith("image/")) {
-        toast.error(`${file.name} is not an image.`);
-        continue;
+    try {
+      for (const file of Array.from(files)) {
+        if (!file.type.startsWith("image/")) {
+          toast.error(`${file.name} is not an image.`);
+          continue;
+        }
+        if (file.size > 10 * 1024 * 1024) {
+          toast.error(`${file.name} is larger than 10MB.`);
+          continue;
+        }
+
+        const ticket = await createProductImageUpload(file.type, file.size);
+        if (!ticket.ok) {
+          toast.error(`Upload failed for ${file.name}: ${ticket.message}`);
+          continue;
+        }
+
+        const { error } = await supabase.storage
+          .from("product-images")
+          .uploadToSignedUrl(ticket.path, ticket.token, file, {
+            cacheControl: "31536000",
+            contentType: file.type,
+          });
+
+        if (error) {
+          console.error("Image upload failed:", error);
+          toast.error(`Upload failed for ${file.name}: ${error.message}`);
+          continue;
+        }
+
+        uploaded.push(ticket.publicUrl);
       }
-      if (file.size > 10 * 1024 * 1024) {
-        toast.error(`${file.name} is larger than 10MB.`);
-        continue;
+
+      if (uploaded.length > 0) {
+        onChange([...images, ...uploaded]);
+        toast.success(`${uploaded.length} image${uploaded.length > 1 ? "s" : ""} uploaded.`);
       }
-
-      const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
-      const path = `${crypto.randomUUID()}.${ext}`;
-
-      const { error } = await supabase.storage
-        .from("product-images")
-        .upload(path, file, { cacheControl: "31536000", contentType: file.type });
-
-      if (error) {
-        console.error("Image upload failed:", error);
-        toast.error(`Upload failed for ${file.name}: ${error.message}`);
-        continue;
-      }
-
-      const {
-        data: { publicUrl },
-      } = supabase.storage.from("product-images").getPublicUrl(path);
-      uploaded.push(publicUrl);
+    } catch (error) {
+      console.error("Image upload failed:", error);
+      toast.error("The image upload failed unexpectedly. Please try again.");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
-
-    if (uploaded.length > 0) {
-      onChange([...images, ...uploaded]);
-      toast.success(`${uploaded.length} image${uploaded.length > 1 ? "s" : ""} uploaded.`);
-    }
-    setUploading(false);
-    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const addUrl = () => {
