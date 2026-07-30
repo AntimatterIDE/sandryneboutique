@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { ProductForm } from "@/components/admin/product-form";
+import { getVariantsByProductIds } from "@/lib/data/products";
 import { createClient } from "@/lib/supabase/server";
 import type { Product } from "@/lib/types";
 
@@ -20,13 +21,15 @@ export default async function EditProductPage({
   const product = data as Product | null;
   if (!product) notFound();
 
+  const variants = await getVariantsByProductIds([product.id]);
+
   return (
     <div className="space-y-8">
       <header>
         <h1 className="font-serif text-3xl tracking-tight">Edit Product</h1>
         <p className="text-sm text-muted-foreground mt-1">{product.name}</p>
       </header>
-      <ProductForm product={product} />
+      <ProductForm product={{ ...product, variants: variants.get(product.id) ?? [] }} />
     </div>
   );
 }

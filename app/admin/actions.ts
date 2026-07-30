@@ -19,6 +19,19 @@ const PRODUCT_CATEGORIES = [
   "active-wear",
 ] as const;
 
+export interface VariantInput {
+  id?: string;
+  heartland_item_id: number;
+  heartland_public_id: string;
+  heartland_grid_id: number | null;
+  size: string | null;
+  color: string | null;
+  price: number;
+  inventory_count: number;
+  active: boolean;
+  sort_order: number;
+}
+
 export interface ProductInput {
   name: string;
   description: string;
@@ -34,6 +47,7 @@ export interface ProductInput {
   sale_price: number | null;
   heartland_item_id: number | null;
   heartland_public_id: string | null;
+  variants: VariantInput[];
 }
 
 async function requireAdmin(): Promise<ActionResult | null> {
@@ -60,17 +74,149 @@ function validateProduct(input: ProductInput): string | null {
     return "Sale price is required when the product is on sale.";
   }
   if (input.images.length === 0) return "Add at least one product image.";
-  if (
-    input.heartland_item_id != null &&
-    (!Number.isInteger(input.heartland_item_id) || input.heartland_item_id <= 0)
-  ) {
-    return "Heartland item ID must be a positive whole number.";
+
+  if (input.variants.length === 0) {
+    return "Add at least one size/color variant linked to a Heartland Item #.";
   }
+
+  const seenPublic = new Set<string>();
+  const seenItem = new Set<number>();
+  for (const variant of input.variants) {
+    if (!Number.isInteger(variant.heartland_item_id) || variant.heartland_item_id <= 0) {
+      return "Each variant needs a valid Heartland internal item ID.";
+    }
+    if (!variant.heartland_public_id?.trim()) {
+      return "Each variant needs a Heartland Item #.";
+    }
+    if (!Number.isFinite(variant.price) || variant.price < 0) {
+      return "Each variant needs a valid price.";
+    }
+    if (!Number.isInteger(variant.inventory_count) || variant.inventory_count < 0) {
+      return "Each variant needs a valid inventory count.";
+    }
+    const publicId = variant.heartland_public_id.trim();
+    if (seenPublic.has(publicId)) return `Duplicate Item # ${publicId}.`;
+    if (seenItem.has(variant.heartland_item_id)) {
+      return `Duplicate Heartland item ID ${variant.heartland_item_id}.`;
+    }
+    seenPublic.add(publicId);
+    seenItem.add(variant.heartland_item_id);
+  }
+
   return null;
 }
 
 function revalidateStore() {
   revalidatePath("/", "layout");
+}
+
+function productRowFromInput(input: ProductInput) {
+  const sizes = [
+    ...new Set(
+      input.variants
+        .map((v) => v.size?.trim())
+        .filter((value): value is string => Boolean(value))
+    ),
+  ];
+  const colors = [
+    ...new Set(
+      input.variants
+        .map((v) => v.color?.trim())
+        .filter((value): value is string => Boolean(value))
+    ),
+  ];
+  const inventory_count = input.variants
+    .filter((v) => v.active)
+    .reduce((sum, v) => sum + v.inventory_count, 0);
+  const primary = input.variants[0];
+
+  return {
+    name: input.name,
+    description: input.description,
+    price: input.price,
+    images: input.images,
+    inventory_count,
+    category: input.category,
+    slug: input.slug,
+    sizes: sizes.length > 0 ? sizes : input.sizes,
+    colors: colors.length > 0 ? colors : input.colors,
+    is_new: input.is_new,
+    on_sale: input.on_sale,
+    sale_price: input.on_sale ? input.sale_price : null,
+    heartland_item_id: primary?.heartland_item_id ?? input.heartland_item_id,
+    heartland_public_id: primary?.heartland_public_id ?? input.heartland_public_id,
+  };
+}
+
+async function syncProductVariants(
+  supabase: Awaited<ReturnType<typeof createPrivilegedClient>>,
+  productId: string,
+  variants: VariantInput[]
+): Promise<string | null> {
+  const { data: existing, error: existingError } = await supabase
+    .from("product_variants")
+    .select("id")
+    .eq("product_id", productId);
+
+  if (existingError) {
+    console.error("Variant load failed:", existingError);
+    return "Failed to load existing variants.";
+  }
+
+  const keepIds = new Set(variants.map((v) => v.id).filter(Boolean));
+  const toDelete = (existing ?? [])
+    .map((row) => row.id as string)
+    .filter((id) => !keepIds.has(id));
+
+  if (toDelete.length > 0) {
+    const { error } = await supabase.from("product_variants").delete().in("id", toDelete);
+    if (error) {
+      console.error("Variant delete failed:", error);
+      return "Failed to remove outdated variants.";
+    }
+  }
+
+  for (const [index, variant] of variants.entries()) {
+    const payload = {
+      product_id: productId,
+      heartland_item_id: variant.heartland_item_id,
+      heartland_public_id: variant.heartland_public_id.trim(),
+      heartland_grid_id: variant.heartland_grid_id,
+      size: variant.size?.trim() || null,
+      color: variant.color?.trim() || null,
+      price: variant.price,
+      inventory_count: variant.inventory_count,
+      active: variant.active,
+      sort_order: variant.sort_order ?? index,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (variant.id) {
+      const { error } = await supabase
+        .from("product_variants")
+        .update(payload)
+        .eq("id", variant.id)
+        .eq("product_id", productId);
+      if (error) {
+        console.error("Variant update failed:", error);
+        if (error.code === "23505") {
+          return "A Heartland Item # or item ID is already linked to another product.";
+        }
+        return "Failed to update variants.";
+      }
+    } else {
+      const { error } = await supabase.from("product_variants").insert(payload);
+      if (error) {
+        console.error("Variant insert failed:", error);
+        if (error.code === "23505") {
+          return "A Heartland Item # or item ID is already linked to another product.";
+        }
+        return "Failed to save variants.";
+      }
+    }
+  }
+
+  return null;
 }
 
 export async function createProduct(input: ProductInput): Promise<ActionResult> {
@@ -83,7 +229,7 @@ export async function createProduct(input: ProductInput): Promise<ActionResult> 
   const supabase = await createPrivilegedClient();
   const { data, error } = await supabase
     .from("products")
-    .insert({ ...input, sale_price: input.on_sale ? input.sale_price : null })
+    .insert(productRowFromInput(input))
     .select("id")
     .single();
 
@@ -96,6 +242,12 @@ export async function createProduct(input: ProductInput): Promise<ActionResult> 
     }
     console.error("Product create failed:", error);
     return { ok: false, message: "Failed to create product. Please try again." };
+  }
+
+  const variantError = await syncProductVariants(supabase, data.id, input.variants);
+  if (variantError) {
+    await supabase.from("products").delete().eq("id", data.id);
+    return { ok: false, message: variantError };
   }
 
   revalidateStore();
@@ -112,7 +264,7 @@ export async function updateProduct(id: string, input: ProductInput): Promise<Ac
   const supabase = await createPrivilegedClient();
   const { error } = await supabase
     .from("products")
-    .update({ ...input, sale_price: input.on_sale ? input.sale_price : null })
+    .update(productRowFromInput(input))
     .eq("id", id);
 
   if (error) {
@@ -125,6 +277,9 @@ export async function updateProduct(id: string, input: ProductInput): Promise<Ac
     console.error("Product update failed:", error);
     return { ok: false, message: "Failed to update product. Please try again." };
   }
+
+  const variantError = await syncProductVariants(supabase, id, input.variants);
+  if (variantError) return { ok: false, message: variantError };
 
   revalidateStore();
   return { ok: true, message: "Product updated.", id };
@@ -397,13 +552,29 @@ export async function updateOrderStatus(
   return { ok: true, message: "Order updated." };
 }
 
+export interface HeartlandVariantLookup {
+  heartland_item_id: number;
+  heartland_public_id: string;
+  heartland_grid_id: number | null;
+  size: string | null;
+  color: string | null;
+  price: number;
+  inventory_count: number;
+  active: boolean;
+  sort_order: number;
+}
+
 export interface HeartlandItemLookup {
   heartland_item_id: number;
   heartland_public_id: string | null;
+  heartland_grid_id: number | null;
   name: string;
   description: string;
   price: number;
   inventory_count: number;
+  sizes: string[];
+  colors: string[];
+  variants: HeartlandVariantLookup[];
   active: boolean;
 }
 
@@ -412,60 +583,53 @@ export type HeartlandLookupResult =
   | { ok: false; message: string };
 
 /**
- * Look up a Heartland Retail item by Item # / public_id first, then by
- * internal id when the value is numeric. Heartland Item # values are often
- * numeric strings, so treating every number as an internal id causes false
- * 404s (for example, Item # 11907 is not necessarily GET /items/11907).
+ * Look up a Heartland Retail Item # / internal id and expand its Item Grid
+ * into every size/color variant with live inventory.
  */
 export async function lookupHeartlandItem(rawId: string): Promise<HeartlandLookupResult> {
   const denied = await requireAdmin();
   if (denied) return { ok: false, message: denied.message };
 
-  const { getItem, getItemQtyAvailable, searchItemsByPublicId } = await import(
-    "@/lib/heartland-retail"
-  );
+  const { lookupItemGrid } = await import("@/lib/heartland-retail");
 
   const trimmed = rawId.trim();
   if (!trimmed) return { ok: false, message: "Enter a Heartland item ID or Item #." };
 
   try {
-    const matches = await searchItemsByPublicId(trimmed);
-    let item =
-      matches.find((match) => String(match.public_id ?? "") === trimmed) ??
-      matches[0];
-
-    if (!item && /^\d+$/.test(trimmed)) {
-      try {
-        item = await getItem(Number(trimmed));
-      } catch (err) {
-        if (!(err instanceof Error) || !err.message.includes("→ 404:")) throw err;
-      }
-    }
-
-    if (!item) {
+    const grid = await lookupItemGrid(trimmed);
+    if (!grid || grid.variants.length === 0) {
       return { ok: false, message: `No Heartland item found for “${trimmed}”.` };
     }
 
-    let inventory_count = 0;
-    try {
-      inventory_count = await getItemQtyAvailable(item.id);
-    } catch (err) {
-      console.warn("Retail inventory lookup during item fetch:", err);
-    }
-
-    const name = (item.description || "").trim() || `Item ${item.id}`;
-    const description = (item.long_description || item.description || "").trim();
+    const primary =
+      grid.variants.find((v) => String(v.heartland_public_id) === trimmed) ??
+      grid.variants.find((v) => String(v.heartland_item_id) === trimmed) ??
+      grid.variants[0];
 
     return {
       ok: true,
       item: {
-        heartland_item_id: item.id,
-        heartland_public_id: item.public_id ?? null,
-        name,
-        description,
-        price: Number(item.price) || 0,
-        inventory_count,
-        active: item.active !== false,
+        heartland_item_id: primary.heartland_item_id,
+        heartland_public_id: primary.heartland_public_id,
+        heartland_grid_id: grid.heartland_grid_id,
+        name: grid.name,
+        description: grid.description,
+        price: grid.price,
+        inventory_count: grid.inventory_count,
+        sizes: grid.sizes,
+        colors: grid.colors,
+        variants: grid.variants.map((variant) => ({
+          heartland_item_id: variant.heartland_item_id,
+          heartland_public_id: variant.heartland_public_id,
+          heartland_grid_id: variant.heartland_grid_id,
+          size: variant.size,
+          color: variant.color,
+          price: variant.price,
+          inventory_count: variant.inventory_count,
+          active: variant.active,
+          sort_order: variant.sort_order,
+        })),
+        active: primary.active,
       },
     };
   } catch (err) {

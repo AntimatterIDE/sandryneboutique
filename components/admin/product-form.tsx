@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -32,8 +32,9 @@ import {
   lookupHeartlandItem,
   updateProduct,
   type ProductInput,
+  type VariantInput,
 } from "@/app/admin/actions";
-import type { Product } from "@/lib/types";
+import type { Product, ProductVariant } from "@/lib/types";
 
 const CATEGORY_OPTIONS = [
   { value: "bottoms", label: "Bottoms" },
@@ -50,6 +51,36 @@ function slugify(value: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+interface DraftVariant {
+  key: string;
+  id?: string;
+  heartland_item_id: string;
+  heartland_public_id: string;
+  heartland_grid_id: number | null;
+  size: string;
+  color: string;
+  price: string;
+  inventory_count: string;
+  active: boolean;
+  sort_order: number;
+}
+
+function toDraftVariants(variants: ProductVariant[] | undefined): DraftVariant[] {
+  return (variants ?? []).map((variant, index) => ({
+    key: variant.id,
+    id: variant.id,
+    heartland_item_id: String(variant.heartland_item_id),
+    heartland_public_id: variant.heartland_public_id,
+    heartland_grid_id: variant.heartland_grid_id,
+    size: variant.size ?? "",
+    color: variant.color ?? "",
+    price: String(variant.price),
+    inventory_count: String(variant.inventory_count),
+    active: variant.active,
+    sort_order: variant.sort_order ?? index,
+  }));
+}
+
 interface ProductFormProps {
   product?: Product;
 }
@@ -64,45 +95,86 @@ export function ProductForm({ product }: ProductFormProps) {
   const [slugTouched, setSlugTouched] = useState(isEdit);
   const [description, setDescription] = useState(product?.description ?? "");
   const [price, setPrice] = useState(product ? String(product.price) : "");
-  const [inventory, setInventory] = useState(product ? String(product.inventory_count) : "0");
   const [category, setCategory] = useState(product?.category ?? "");
-  const [sizes, setSizes] = useState((product?.sizes ?? []).join(", "));
-  const [colors, setColors] = useState((product?.colors ?? []).join(", "));
   const [images, setImages] = useState<string[]>(product?.images ?? []);
   const [isNew, setIsNew] = useState(product?.is_new ?? true);
   const [onSale, setOnSale] = useState(product?.on_sale ?? false);
   const [salePrice, setSalePrice] = useState(
     product?.sale_price != null ? String(product.sale_price) : ""
   );
-  const [heartlandItemId, setHeartlandItemId] = useState(
-    product?.heartland_item_id != null ? String(product.heartland_item_id) : ""
+  const [lookupQuery, setLookupQuery] = useState(
+    product?.heartland_public_id ??
+      (product?.heartland_item_id != null ? String(product.heartland_item_id) : "")
   );
-  const [heartlandPublicId, setHeartlandPublicId] = useState(
-    product?.heartland_public_id ?? ""
+  const [variants, setVariants] = useState<DraftVariant[]>(() =>
+    toDraftVariants(product?.variants)
   );
   const [lookupPending, setLookupPending] = useState(false);
 
-  const buildInput = (): ProductInput => ({
-    name: name.trim(),
-    description: description.trim(),
-    price: Number(price),
-    images,
-    inventory_count: Number(inventory),
-    category,
-    slug: slug.trim(),
-    sizes: sizes.split(",").map((s) => s.trim()).filter(Boolean),
-    colors: colors.split(",").map((c) => c.trim()).filter(Boolean),
-    is_new: isNew,
-    on_sale: onSale,
-    sale_price: onSale && salePrice ? Number(salePrice) : null,
-    heartland_item_id: heartlandItemId.trim() ? Number(heartlandItemId.trim()) : null,
-    heartland_public_id: heartlandPublicId.trim() || null,
-  });
+  const totalInventory = useMemo(
+    () =>
+      variants
+        .filter((v) => v.active)
+        .reduce((sum, v) => sum + (Number.parseInt(v.inventory_count, 10) || 0), 0),
+    [variants]
+  );
+
+  const updateVariant = (key: string, patch: Partial<DraftVariant>) => {
+    setVariants((current) =>
+      current.map((variant) => (variant.key === key ? { ...variant, ...patch } : variant))
+    );
+  };
+
+  const removeVariant = (key: string) => {
+    setVariants((current) => current.filter((variant) => variant.key !== key));
+  };
+
+  const buildInput = (): ProductInput => {
+    const variantInputs: VariantInput[] = variants.map((variant, index) => ({
+      id: variant.id,
+      heartland_item_id: Number(variant.heartland_item_id),
+      heartland_public_id: variant.heartland_public_id.trim(),
+      heartland_grid_id: variant.heartland_grid_id,
+      size: variant.size.trim() || null,
+      color: variant.color.trim() || null,
+      price: Number(variant.price),
+      inventory_count: Number.parseInt(variant.inventory_count, 10) || 0,
+      active: variant.active,
+      sort_order: variant.sort_order ?? index,
+    }));
+
+    const sizes = [
+      ...new Set(variantInputs.map((v) => v.size).filter((value): value is string => Boolean(value))),
+    ];
+    const colors = [
+      ...new Set(
+        variantInputs.map((v) => v.color).filter((value): value is string => Boolean(value))
+      ),
+    ];
+
+    return {
+      name: name.trim(),
+      description: description.trim(),
+      price: Number(price),
+      images,
+      inventory_count: totalInventory,
+      category,
+      slug: slug.trim(),
+      sizes,
+      colors,
+      is_new: isNew,
+      on_sale: onSale,
+      sale_price: onSale && salePrice ? Number(salePrice) : null,
+      heartland_item_id: variantInputs[0]?.heartland_item_id ?? null,
+      heartland_public_id: variantInputs[0]?.heartland_public_id ?? null,
+      variants: variantInputs,
+    };
+  };
 
   const handleHeartlandLookup = () => {
-    const query = heartlandItemId.trim() || heartlandPublicId.trim();
+    const query = lookupQuery.trim();
     if (!query) {
-      toast.error("Enter a Heartland item ID or Item # to look up.");
+      toast.error("Enter a Heartland Item # to look up.");
       return;
     }
     setLookupPending(true);
@@ -114,17 +186,27 @@ export function ProductForm({ product }: ProductFormProps) {
           return;
         }
         const item = result.item;
-        setHeartlandItemId(String(item.heartland_item_id));
-        setHeartlandPublicId(item.heartland_public_id ?? "");
         setName(item.name);
         if (!slugTouched) setSlug(slugify(item.name));
         setDescription(item.description);
         setPrice(String(item.price));
-        setInventory(String(item.inventory_count));
+        setLookupQuery(item.heartland_public_id ?? query);
+        setVariants(
+          item.variants.map((variant, index) => ({
+            key: `hl-${variant.heartland_item_id}`,
+            heartland_item_id: String(variant.heartland_item_id),
+            heartland_public_id: variant.heartland_public_id,
+            heartland_grid_id: variant.heartland_grid_id,
+            size: variant.size ?? "",
+            color: variant.color ?? "",
+            price: String(variant.price),
+            inventory_count: String(variant.inventory_count),
+            active: variant.active,
+            sort_order: variant.sort_order ?? index,
+          }))
+        );
         toast.success(
-          item.active
-            ? `Loaded Heartland item ${item.heartland_item_id}.`
-            : `Loaded item ${item.heartland_item_id} (marked inactive in Retail).`
+          `Loaded ${item.variants.length} variant${item.variants.length === 1 ? "" : "s"} from Heartland.`
         );
       } finally {
         setLookupPending(false);
@@ -165,49 +247,34 @@ export function ProductForm({ product }: ProductFormProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-8 max-w-3xl">
+    <form onSubmit={handleSubmit} className="space-y-8 max-w-4xl">
       <div className="space-y-3 border border-foreground/10 p-4">
         <div>
           <p className="text-xs tracking-[0.18em] uppercase text-muted-foreground">
             Heartland Retail
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Enter the Retail Item # (recommended) or internal item ID to fill name, price, and
-            inventory. Inventory stays synced from Retail; match Item # to your Shopify SKU.
+            Enter any Item # from a style (e.g. 110436). Look up loads the full Item Grid —
+            every size and color with its own Item # and inventory.
           </p>
         </div>
-        <div className="grid gap-4 sm:grid-cols-[1fr_1fr_auto]">
-          <div className="space-y-1.5">
-            <Label htmlFor="heartland_item_id">Internal item ID</Label>
-            <Input
-              id="heartland_item_id"
-              value={heartlandItemId}
-              onChange={(e) => setHeartlandItemId(e.target.value)}
-              placeholder="e.g. 103998"
-              className="rounded-none font-mono text-sm"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="heartland_public_id">Item # (public)</Label>
-            <Input
-              id="heartland_public_id"
-              value={heartlandPublicId}
-              onChange={(e) => setHeartlandPublicId(e.target.value)}
-              placeholder="e.g. 11907 · matches Shopify SKU"
-              className="rounded-none font-mono text-sm"
-            />
-          </div>
-          <div className="flex items-end">
-            <Button
-              type="button"
-              variant="outline"
-              disabled={pending || lookupPending}
-              onClick={handleHeartlandLookup}
-              className="rounded-none tracking-[0.14em] uppercase text-xs h-9 w-full sm:w-auto"
-            >
-              {lookupPending ? <Loader2 className="size-4 animate-spin" /> : "Look up"}
-            </Button>
-          </div>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <Input
+            value={lookupQuery}
+            onChange={(e) => setLookupQuery(e.target.value)}
+            placeholder="Item # e.g. 110436"
+            className="rounded-none font-mono text-sm flex-1"
+            aria-label="Heartland Item number"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            disabled={pending || lookupPending}
+            onClick={handleHeartlandLookup}
+            className="rounded-none tracking-[0.14em] uppercase text-xs h-9"
+          >
+            {lookupPending ? <Loader2 className="size-4 animate-spin" /> : "Look up grid"}
+          </Button>
         </div>
       </div>
 
@@ -268,7 +335,7 @@ export function ProductForm({ product }: ProductFormProps) {
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="price">Price (USD)</Label>
+          <Label htmlFor="price">Base price (USD)</Label>
           <Input
             id="price"
             type="number"
@@ -282,40 +349,129 @@ export function ProductForm({ product }: ProductFormProps) {
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="inventory">Inventory count</Label>
+          <Label>Total inventory</Label>
           <Input
-            id="inventory"
-            type="number"
-            min="0"
-            step="1"
-            value={inventory}
-            onChange={(e) => setInventory(e.target.value)}
-            required
-            className="rounded-none"
+            value={String(totalInventory)}
+            readOnly
+            className="rounded-none bg-muted/40"
+            aria-label="Total inventory from variants"
           />
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <Label>Variants</Label>
+            <p className="text-xs text-muted-foreground mt-1">
+              Each row is one Heartland sellable item (size × color) with its own stock.
+            </p>
+          </div>
+          <p className="text-xs text-muted-foreground tabular-nums">
+            {variants.length} variant{variants.length === 1 ? "" : "s"}
+          </p>
         </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="sizes">Sizes (comma separated)</Label>
-          <Input
-            id="sizes"
-            value={sizes}
-            onChange={(e) => setSizes(e.target.value)}
-            placeholder="XS, S, M, L, XL"
-            className="rounded-none"
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <Label htmlFor="colors">Colors (comma separated)</Label>
-          <Input
-            id="colors"
-            value={colors}
-            onChange={(e) => setColors(e.target.value)}
-            placeholder="Ivory, Black"
-            className="rounded-none"
-          />
-        </div>
+        {variants.length === 0 ? (
+          <div className="border border-dashed border-foreground/15 px-4 py-8 text-center text-sm text-muted-foreground">
+            Look up a Heartland Item # to load size/color variants.
+          </div>
+        ) : (
+          <div className="border border-foreground/10 overflow-x-auto">
+            <table className="w-full min-w-[720px] text-sm">
+              <thead className="bg-muted/40 text-[11px] tracking-[0.12em] uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 text-left font-normal">Size</th>
+                  <th className="px-3 py-2 text-left font-normal">Color</th>
+                  <th className="px-3 py-2 text-left font-normal">Item #</th>
+                  <th className="px-3 py-2 text-left font-normal">Internal ID</th>
+                  <th className="px-3 py-2 text-right font-normal">Price</th>
+                  <th className="px-3 py-2 text-right font-normal">Qty</th>
+                  <th className="px-3 py-2 text-center font-normal">Active</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {variants.map((variant) => (
+                  <tr key={variant.key} className="border-t border-foreground/8">
+                    <td className="px-2 py-2">
+                      <Input
+                        value={variant.size}
+                        onChange={(e) => updateVariant(variant.key, { size: e.target.value })}
+                        className="rounded-none h-8"
+                      />
+                    </td>
+                    <td className="px-2 py-2">
+                      <Input
+                        value={variant.color}
+                        onChange={(e) => updateVariant(variant.key, { color: e.target.value })}
+                        className="rounded-none h-8"
+                      />
+                    </td>
+                    <td className="px-2 py-2">
+                      <Input
+                        value={variant.heartland_public_id}
+                        onChange={(e) =>
+                          updateVariant(variant.key, { heartland_public_id: e.target.value })
+                        }
+                        className="rounded-none h-8 font-mono text-xs"
+                      />
+                    </td>
+                    <td className="px-2 py-2">
+                      <Input
+                        value={variant.heartland_item_id}
+                        onChange={(e) =>
+                          updateVariant(variant.key, { heartland_item_id: e.target.value })
+                        }
+                        className="rounded-none h-8 font-mono text-xs"
+                      />
+                    </td>
+                    <td className="px-2 py-2">
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={variant.price}
+                        onChange={(e) => updateVariant(variant.key, { price: e.target.value })}
+                        className="rounded-none h-8 text-right"
+                      />
+                    </td>
+                    <td className="px-2 py-2">
+                      <Input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={variant.inventory_count}
+                        onChange={(e) =>
+                          updateVariant(variant.key, { inventory_count: e.target.value })
+                        }
+                        className="rounded-none h-8 text-right"
+                      />
+                    </td>
+                    <td className="px-2 py-2 text-center">
+                      <Switch
+                        checked={variant.active}
+                        onCheckedChange={(checked) =>
+                          updateVariant(variant.key, { active: checked })
+                        }
+                      />
+                    </td>
+                    <td className="px-2 py-2">
+                      <button
+                        type="button"
+                        aria-label="Remove variant"
+                        onClick={() => removeVariant(variant.key)}
+                        className="p-1.5 text-muted-foreground hover:text-destructive"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <div className="space-y-3">

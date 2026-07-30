@@ -116,6 +116,7 @@ export function CheckoutForm({ publicKey }: { publicKey: string | null }) {
           },
           lines: currentItems.map((i) => ({
             productId: i.productId,
+            variantId: i.variantId ?? null,
             quantity: i.quantity,
             size: i.size,
             color: i.color,

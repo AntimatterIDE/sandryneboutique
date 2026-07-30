@@ -16,7 +16,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { createPrivilegedClient } from "@/lib/supabase/server";
-import { supabaseConfigured } from "@/lib/data/products";
+import {
+  getVariantsByProductIds,
+  productIdsMatchingVariantSearch,
+  productSearchFilters,
+  supabaseConfigured,
+} from "@/lib/data/products";
 import type { Product } from "@/lib/types";
 import { effectivePrice, formatPrice } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -50,6 +55,25 @@ function adminHref(params: {
   if (params.page && params.page > 1) sp.set("page", String(params.page));
   const qs = sp.toString();
   return qs ? `/admin/products?${qs}` : "/admin/products";
+}
+
+/** Primary Item #, plus a count of the remaining size/color variants. */
+function itemNumberLabel(product: Product): string {
+  const numbers = (product.variants ?? [])
+    .map((variant) => variant.heartland_public_id)
+    .filter(Boolean);
+
+  if (numbers.length === 0) {
+    return product.heartland_public_id ?? "—";
+  }
+  if (numbers.length === 1) return numbers[0];
+  return `${numbers[0]} +${numbers.length - 1}`;
+}
+
+function variantCountLabel(product: Product): string | null {
+  const count = product.variants?.length ?? 0;
+  if (count <= 1) return null;
+  return `${count} variants`;
 }
 
 function ProductBadges({ product }: { product: Product }) {
@@ -96,16 +120,9 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
       .order("created_at", { ascending: false });
 
     if (q) {
-      const term = q.replace(/[%_,]/g, "");
-      const searchFilters = [
-        `name.ilike.%${term}%`,
-        `slug.ilike.%${term}%`,
-        `heartland_public_id.ilike.%${term}%`,
-      ];
-      if (/^\d+$/.test(term)) {
-        searchFilters.push(`heartland_item_id.eq.${Number(term)}`);
-      }
-      query = query.or(searchFilters.join(","));
+      const variantProductIds = await productIdsMatchingVariantSearch(q);
+      const searchFilters = productSearchFilters(q, variantProductIds);
+      if (searchFilters.length > 0) query = query.or(searchFilters.join(","));
     }
     if (category !== "all") query = query.eq("category", category);
     if (stock === "in") query = query.gt("inventory_count", 0);
@@ -120,6 +137,14 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
     if (error) console.error("Admin product query failed:", error);
     products = (data ?? []) as Product[];
     total = count ?? 0;
+
+    if (products.length > 0) {
+      const variantsByProduct = await getVariantsByProductIds(products.map((p) => p.id));
+      products = products.map((product) => ({
+        ...product,
+        variants: variantsByProduct.get(product.id) ?? [],
+      }));
+    }
   }
 
   const totalPages = Math.max(1, Math.ceil(total / ADMIN_PAGE_SIZE));
@@ -177,7 +202,12 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
                   <div className="min-w-0 flex-1 space-y-1.5">
                     <p className="font-medium leading-snug">{product.name}</p>
                     <p className="text-xs text-muted-foreground font-mono">
-                      Item # {product.heartland_public_id ?? "—"}
+                      Item # {itemNumberLabel(product)}
+                      {variantCountLabel(product) ? (
+                        <span className="ml-1.5 normal-case tracking-normal">
+                          · {variantCountLabel(product)}
+                        </span>
+                      ) : null}
                     </p>
                     <p className="text-xs text-muted-foreground capitalize">
                       {product.category.replace("-", " & ")} ·{" "}
@@ -242,8 +272,18 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
                       </Link>
                       <p className="text-xs text-muted-foreground font-mono">{product.slug}</p>
                     </TableCell>
-                    <TableCell className="text-xs text-muted-foreground font-mono">
-                      {product.heartland_public_id ?? "—"}
+                    <TableCell
+                      className="text-xs text-muted-foreground font-mono"
+                      title={(product.variants ?? [])
+                        .map((variant) => variant.heartland_public_id)
+                        .join(", ")}
+                    >
+                      <span>{itemNumberLabel(product)}</span>
+                      {variantCountLabel(product) ? (
+                        <span className="block text-[10px] uppercase tracking-wider mt-0.5">
+                          {variantCountLabel(product)}
+                        </span>
+                      ) : null}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground capitalize">
                       {product.category.replace("-", " & ")}

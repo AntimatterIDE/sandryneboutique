@@ -10,11 +10,12 @@ import {
 } from "@/lib/heartland-retail";
 import { FLAT_SHIPPING_RATE, FREE_SHIPPING_THRESHOLD } from "@/lib/constants";
 import { discountAmount, findDiscount } from "@/lib/discounts";
-import type { OrderItem, Product, ShippingAddress } from "@/lib/types";
+import type { OrderItem, Product, ProductVariant, ShippingAddress } from "@/lib/types";
 import { effectivePrice } from "@/lib/types";
 
 export interface CheckoutLine {
   productId: string;
+  variantId: string | null;
   quantity: number;
   size: string | null;
   color: string | null;
@@ -68,12 +69,15 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
 
   const admin = createAdminClient();
 
-  // Re-price every line from the database — never trust client totals.
-  const ids = [...new Set(input.lines.map((l) => l.productId))];
+  const productIds = [...new Set(input.lines.map((l) => l.productId))];
+  const variantIds = [
+    ...new Set(input.lines.map((l) => l.variantId).filter((id): id is string => Boolean(id))),
+  ];
+
   const { data: productRows, error: productError } = await admin
     .from("products")
     .select("*")
-    .in("id", ids);
+    .in("id", productIds);
 
   if (productError || !productRows) {
     console.error("Checkout product lookup failed:", productError);
@@ -81,6 +85,22 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
   }
 
   const products = new Map((productRows as Product[]).map((p) => [p.id, p]));
+
+  const variants = new Map<string, ProductVariant>();
+  if (variantIds.length > 0) {
+    const { data: variantRows, error: variantError } = await admin
+      .from("product_variants")
+      .select("*")
+      .in("id", variantIds);
+
+    if (variantError) {
+      console.error("Checkout variant lookup failed:", variantError);
+      return { ok: false, error: "We couldn't verify your cart. Please try again." };
+    }
+    for (const row of (variantRows ?? []) as ProductVariant[]) {
+      variants.set(row.id, row);
+    }
+  }
 
   const orderItems: OrderItem[] = [];
   let subtotal = 0;
@@ -90,6 +110,51 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
     if (!product) {
       return { ok: false, error: "An item in your cart is no longer available." };
     }
+
+    const variant = line.variantId ? variants.get(line.variantId) : null;
+
+    if (line.variantId) {
+      if (!variant || variant.product_id !== product.id || !variant.active) {
+        return {
+          ok: false,
+          error: `A selected size/color for "${product.name}" is no longer available.`,
+        };
+      }
+      if (heartlandRetailConfigured() && !variant.heartland_item_id) {
+        return {
+          ok: false,
+          error: `"${product.name}" is not linked to Heartland Retail inventory and cannot be purchased online.`,
+        };
+      }
+      if (variant.inventory_count < line.quantity) {
+        return {
+          ok: false,
+          error: `Sorry, we only have ${variant.inventory_count} of "${product.name}" (${[variant.size, variant.color].filter(Boolean).join(" / ")}) left.`,
+        };
+      }
+
+      const price =
+        product.on_sale && product.sale_price != null
+          ? product.sale_price
+          : Number(variant.price) || effectivePrice(product);
+      subtotal += price * line.quantity;
+      orderItems.push({
+        product_id: product.id,
+        variant_id: variant.id,
+        heartland_item_id: variant.heartland_item_id,
+        heartland_public_id: variant.heartland_public_id,
+        name: product.name,
+        slug: product.slug,
+        image: product.images[0] ?? null,
+        price,
+        quantity: line.quantity,
+        size: variant.size ?? line.size,
+        color: variant.color ?? line.color,
+      });
+      continue;
+    }
+
+    // Legacy product-level checkout when no variants exist yet.
     if (heartlandRetailConfigured() && product.heartland_item_id == null) {
       return {
         ok: false,
@@ -106,6 +171,9 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
     subtotal += price * line.quantity;
     orderItems.push({
       product_id: product.id,
+      variant_id: null,
+      heartland_item_id: product.heartland_item_id,
+      heartland_public_id: product.heartland_public_id,
       name: product.name,
       slug: product.slug,
       image: product.images[0] ?? null,
@@ -116,8 +184,6 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
     });
   }
 
-  // Discount codes are validated server-side; an unknown code is rejected
-  // rather than silently ignored so the shopper isn't surprised at charge time.
   let discount = 0;
   if (input.discountCode?.trim()) {
     const def = findDiscount(input.discountCode);
@@ -131,7 +197,6 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
   const shippingCost = discountedSubtotal >= FREE_SHIPPING_THRESHOLD ? 0 : FLAT_SHIPPING_RATE;
   const total = Math.round((discountedSubtotal + shippingCost) * 100) / 100;
 
-  // Charge the card via Heartland.
   const charge = await chargeCard({
     token: input.token,
     amount: total,
@@ -143,7 +208,6 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
     return { ok: false, error: charge.message ?? "Payment failed. Please try again." };
   }
 
-  // Payment approved — record the order and adjust inventory.
   const supabase = await createClient();
   const {
     data: { user },
@@ -165,7 +229,6 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
     .single();
 
   if (orderError || !order) {
-    // Payment went through but the order insert failed — surface for manual follow-up.
     console.error(
       `CRITICAL: payment ${charge.transactionId} succeeded but order insert failed:`,
       orderError
@@ -178,21 +241,34 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
   }
 
   for (const item of orderItems) {
-    const { error: invError } = await admin.rpc("decrement_inventory", {
-      p_product_id: item.product_id,
-      p_quantity: item.quantity,
-    });
-    if (invError) {
-      console.error(`Inventory decrement failed for ${item.product_id}:`, invError);
+    if (item.variant_id) {
+      const { error: invError } = await admin.rpc("decrement_variant_inventory", {
+        p_variant_id: item.variant_id,
+        p_quantity: item.quantity,
+      });
+      if (invError) {
+        console.error(`Variant inventory decrement failed for ${item.variant_id}:`, invError);
+      }
+    } else {
+      const { error: invError } = await admin.rpc("decrement_inventory", {
+        p_product_id: item.product_id,
+        p_quantity: item.quantity,
+      });
+      if (invError) {
+        console.error(`Inventory decrement failed for ${item.product_id}:`, invError);
+      }
     }
   }
 
   if (heartlandRetailConfigured()) {
     try {
       const retailLines = orderItems.map((item) => {
-        const product = products.get(item.product_id)!;
+        const heartlandItemId = item.heartland_item_id;
+        if (heartlandItemId == null) {
+          throw new Error(`Missing Heartland item id for ${item.name}`);
+        }
         return {
-          heartlandItemId: product.heartland_item_id!,
+          heartlandItemId,
           quantity: item.quantity,
           unitPrice: item.price,
         };

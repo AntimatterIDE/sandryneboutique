@@ -14,6 +14,131 @@ export interface HeartlandRetailItem {
   price: number;
   cost: number;
   active: boolean;
+  /** Present when the item belongs to an Item Grid. */
+  grid_id?: number | null;
+  /** Custom field bag — size/color usually live here. */
+  custom?: Record<string, unknown> | null;
+}
+
+export interface HeartlandGridVariant {
+  heartland_item_id: number;
+  heartland_public_id: string;
+  heartland_grid_id: number | null;
+  size: string | null;
+  color: string | null;
+  price: number;
+  inventory_count: number;
+  active: boolean;
+  description: string;
+  sort_order: number;
+}
+
+export interface HeartlandGridLookup {
+  /** Clean style name without size/color suffixes. */
+  name: string;
+  description: string;
+  price: number;
+  inventory_count: number;
+  heartland_grid_id: number | null;
+  sizes: string[];
+  colors: string[];
+  variants: HeartlandGridVariant[];
+}
+
+const SIZE_ORDER = [
+  "XXS",
+  "XS",
+  "S",
+  "M",
+  "L",
+  "XL",
+  "XXL",
+  "XXXL",
+  "0",
+  "2",
+  "4",
+  "6",
+  "8",
+  "10",
+  "12",
+  "14",
+  "16",
+  "18",
+  "20",
+  "22",
+  "24",
+  "26",
+  "28",
+  "30",
+  "32",
+];
+
+function sizeRank(size: string | null): number {
+  if (!size) return 999;
+  const idx = SIZE_ORDER.indexOf(size.toUpperCase());
+  return idx === -1 ? 500 : idx;
+}
+
+function customString(
+  custom: Record<string, unknown> | null | undefined,
+  keys: string[]
+): string | null {
+  if (!custom) return null;
+  for (const key of keys) {
+    const direct = custom[key];
+    if (typeof direct === "string" && direct.trim()) return direct.trim();
+    const lower = Object.entries(custom).find(
+      ([k, v]) => k.toLowerCase() === key.toLowerCase() && typeof v === "string"
+    );
+    if (lower && typeof lower[1] === "string" && lower[1].trim()) {
+      return lower[1].trim();
+    }
+  }
+  return null;
+}
+
+/**
+ * Heartland descriptions often look like:
+ *   JODIE MAXI - 31400RB - M - WHOLE GRAIN
+ * → name, style code, size, color.
+ */
+export function parseHeartlandDescription(description: string): {
+  name: string;
+  size: string | null;
+  color: string | null;
+} {
+  const parts = description
+    .split(" - ")
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  if (parts.length >= 4) {
+    return {
+      name: parts[0],
+      size: parts[parts.length - 2] || null,
+      color: parts[parts.length - 1] || null,
+    };
+  }
+  if (parts.length === 3) {
+    // NAME - SIZE - COLOR (no style code)
+    return { name: parts[0], size: parts[1] || null, color: parts[2] || null };
+  }
+  return { name: description.trim() || "Untitled", size: null, color: null };
+}
+
+export function extractVariantOptions(item: HeartlandRetailItem): {
+  name: string;
+  size: string | null;
+  color: string | null;
+} {
+  const parsed = parseHeartlandDescription(item.description || "");
+  const size =
+    parsed.size ??
+    customString(item.custom, ["size", "Size", "SIZE", "style1", "Style1"]);
+  const color =
+    parsed.color ??
+    customString(item.custom, ["color", "Color", "colour", "Colour", "COLOR"]);
+  return { name: parsed.name, size, color };
 }
 
 export interface HeartlandInventoryValue {
@@ -110,7 +235,7 @@ async function retailFetch(
 }
 
 export async function getItem(itemId: number): Promise<HeartlandRetailItem> {
-  const { body } = await retailFetch(`/items/${itemId}`);
+  const { body } = await retailFetch(`/items/${itemId}?_include[]=grid`);
   return body as HeartlandRetailItem;
 }
 
@@ -118,9 +243,131 @@ export async function searchItemsByPublicId(
   publicId: string
 ): Promise<HeartlandRetailItem[]> {
   const filter = encodeURIComponent(JSON.stringify({ public_id: publicId }));
-  const { body } = await retailFetch(`/items?_filter[]=${filter}&per_page=10`);
+  const { body } = await retailFetch(
+    `/items?_filter[]=${filter}&per_page=10&_include[]=grid`
+  );
   const result = body as SearchResult<HeartlandRetailItem>;
   return result.results ?? [];
+}
+
+/** Resolve many Item # values in one request. Keyed by public_id. */
+export async function searchItemsByPublicIds(
+  publicIds: string[]
+): Promise<Map<string, HeartlandRetailItem>> {
+  const found = new Map<string, HeartlandRetailItem>();
+  const wanted = [...new Set(publicIds.filter((id) => id.trim()))];
+  if (wanted.length === 0) return found;
+
+  const filter = encodeURIComponent(JSON.stringify({ public_id: { $in: wanted } }));
+  let page = 1;
+  let pages = 1;
+
+  while (page <= pages) {
+    const { body } = await retailFetch(
+      `/items?_filter[]=${filter}&per_page=100&page=${page}&_include[]=grid`
+    );
+    const result = body as SearchResult<HeartlandRetailItem>;
+    for (const item of result.results ?? []) {
+      if (item.public_id) found.set(String(item.public_id), item);
+    }
+    pages = Math.max(1, result.pages ?? 1);
+    page += 1;
+  }
+
+  return found;
+}
+
+/** Every sellable item that belongs to a Heartland Item Grid. */
+export async function searchItemsByGridId(
+  gridId: number
+): Promise<HeartlandRetailItem[]> {
+  const filter = encodeURIComponent(JSON.stringify({ grid_id: gridId }));
+  const items: HeartlandRetailItem[] = [];
+  let page = 1;
+  let pages = 1;
+
+  while (page <= pages) {
+    const { body } = await retailFetch(
+      `/items?_filter[]=${filter}&per_page=100&page=${page}&_include[]=grid`
+    );
+    const result = body as SearchResult<HeartlandRetailItem>;
+    items.push(...(result.results ?? []));
+    pages = Math.max(1, result.pages ?? 1);
+    page += 1;
+  }
+
+  return items;
+}
+
+/**
+ * Resolve an Item # / internal id to the full Item Grid of size/color variants,
+ * with live inventory for each sibling.
+ */
+export async function lookupItemGrid(rawId: string): Promise<HeartlandGridLookup | null> {
+  const trimmed = rawId.trim();
+  if (!trimmed) return null;
+
+  const matches = await searchItemsByPublicId(trimmed);
+  let seed =
+    matches.find((match) => String(match.public_id ?? "") === trimmed) ?? matches[0];
+
+  if (!seed && /^\d+$/.test(trimmed)) {
+    try {
+      seed = await getItem(Number(trimmed));
+    } catch (err) {
+      if (!(err instanceof Error) || !err.message.includes("→ 404:")) throw err;
+    }
+  }
+
+  if (!seed) return null;
+
+  const gridId =
+    typeof seed.grid_id === "number" && seed.grid_id > 0 ? seed.grid_id : null;
+  const siblings = gridId ? await searchItemsByGridId(gridId) : [seed];
+  const items = siblings.length > 0 ? siblings : [seed];
+
+  const qtyByItem = await getInventoryByItemIds(items.map((item) => item.id));
+
+  const variants: HeartlandGridVariant[] = items
+    .map((item) => {
+      const opts = extractVariantOptions(item);
+      return {
+        heartland_item_id: item.id,
+        heartland_public_id: String(item.public_id ?? item.id),
+        heartland_grid_id: gridId,
+        size: opts.size,
+        color: opts.color,
+        price: Number(item.price) || 0,
+        inventory_count: qtyByItem.get(item.id) ?? 0,
+        active: item.active !== false,
+        description: (item.description || "").trim(),
+        sort_order: sizeRank(opts.size),
+      };
+    })
+    .sort((a, b) => {
+      if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+      return (a.color ?? "").localeCompare(b.color ?? "");
+    })
+    .map((variant, index) => ({ ...variant, sort_order: index }));
+
+  const seedOpts = extractVariantOptions(seed);
+  const sizes = [...new Set(variants.map((v) => v.size).filter(Boolean))] as string[];
+  const colors = [...new Set(variants.map((v) => v.color).filter(Boolean))] as string[];
+  const inventory_count = variants.reduce((sum, v) => sum + v.inventory_count, 0);
+  const price =
+    variants.find((v) => v.heartland_item_id === seed.id)?.price ??
+    (Number(seed.price) || 0);
+
+  return {
+    name: seedOpts.name || (seed.description || "").trim() || `Item ${seed.id}`,
+    description: (seed.long_description || seedOpts.name || seed.description || "").trim(),
+    price,
+    inventory_count,
+    heartland_grid_id: gridId,
+    sizes,
+    colors,
+    variants,
+  };
 }
 
 /** Qty available for one item (all locations summed, or filtered to web location). */
@@ -130,8 +377,7 @@ export async function getItemQtyAvailable(itemId: number): Promise<number> {
   params.append("group[]", "item_id");
   if (locationId > 0) params.append("group[]", "location_id");
   params.set("per_page", "100");
-  const filter = encodeURIComponent(JSON.stringify({ item_id: itemId }));
-  params.append("_filter[]", filter);
+  params.append("_filter[]", JSON.stringify({ item_id: itemId }));
 
   const { body } = await retailFetch(`/inventory/values?${params.toString()}`);
   const result = body as SearchResult<HeartlandInventoryValue>;

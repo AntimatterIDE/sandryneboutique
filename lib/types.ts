@@ -10,6 +10,23 @@ export interface Profile {
 
 export type HeartlandSyncStatus = "pending" | "synced" | "failed";
 
+/** One Heartland Retail sellable item (size/color) belonging to a product. */
+export interface ProductVariant {
+  id: string;
+  product_id: string;
+  heartland_item_id: number;
+  heartland_public_id: string;
+  heartland_grid_id: number | null;
+  size: string | null;
+  color: string | null;
+  price: number;
+  inventory_count: number;
+  active: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -24,10 +41,12 @@ export interface Product {
   is_new: boolean;
   on_sale: boolean;
   sale_price: number | null;
-  /** Heartland Retail internal item id — required to sell online. */
+  /** Primary Heartland Retail internal item id (first active variant). */
   heartland_item_id: number | null;
-  /** Heartland Retail Item # (matches Shopify SKU). */
+  /** Primary Heartland Retail Item # (first active variant). */
   heartland_public_id: string | null;
+  /** Loaded with product detail / admin edit; optional on list views. */
+  variants?: ProductVariant[];
   created_at: string;
 }
 
@@ -63,6 +82,9 @@ export type OrderStatus = "pending" | "paid" | "shipped" | "cancelled";
 
 export interface OrderItem {
   product_id: string;
+  variant_id?: string | null;
+  heartland_item_id?: number | null;
+  heartland_public_id?: string | null;
   name: string;
   slug: string;
   image: string | null;

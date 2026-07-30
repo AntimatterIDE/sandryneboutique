@@ -16,8 +16,9 @@ function authorized(request: Request): boolean {
 }
 
 /**
- * Mirrors Heartland Retail qty_available into Supabase products.inventory_count
- * for every product linked with heartland_item_id.
+ * Mirrors Heartland Retail qty_available into product_variants.inventory_count.
+ * The product_variants trigger refreshes parent products.inventory_count /
+ * sizes / colors.
  *
  * Schedule via vercel.json (every 5 minutes) or call manually:
  *   curl -H "Authorization: Bearer $CRON_SECRET" https://yoursite.com/api/cron/sync-heartland-inventory
@@ -42,21 +43,21 @@ export async function GET(request: Request) {
   }
 
   const admin = createAdminClient();
-  const { data: products, error } = await admin
-    .from("products")
+  const { data: variants, error } = await admin
+    .from("product_variants")
     .select("id, heartland_item_id, inventory_count")
-    .not("heartland_item_id", "is", null);
+    .eq("active", true);
 
   if (error) {
-    console.error("Inventory sync product query failed:", error);
-    return NextResponse.json({ ok: false, error: "Product query failed." }, { status: 500 });
+    console.error("Inventory sync variant query failed:", error);
+    return NextResponse.json({ ok: false, error: "Variant query failed." }, { status: 500 });
   }
 
-  const rows = products ?? [];
+  const rows = variants ?? [];
   const itemIds = [
     ...new Set(
       rows
-        .map((p) => p.heartland_item_id as number)
+        .map((v) => v.heartland_item_id as number)
         .filter((id): id is number => typeof id === "number" && id > 0)
     ),
   ];
@@ -79,20 +80,23 @@ export async function GET(request: Request) {
   let updated = 0;
   const failures: string[] = [];
 
-  for (const product of rows) {
-    const itemId = product.heartland_item_id as number;
+  for (const variant of rows) {
+    const itemId = variant.heartland_item_id as number;
     const qty = qtyByItem.get(itemId);
     if (qty == null) continue;
-    if (qty === product.inventory_count) continue;
+    if (qty === variant.inventory_count) continue;
 
     const { error: updateError } = await admin
-      .from("products")
-      .update({ inventory_count: qty })
-      .eq("id", product.id);
+      .from("product_variants")
+      .update({
+        inventory_count: qty,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", variant.id);
 
     if (updateError) {
-      failures.push(product.id);
-      console.error(`Inventory sync update failed for ${product.id}:`, updateError);
+      failures.push(variant.id);
+      console.error(`Inventory sync update failed for variant ${variant.id}:`, updateError);
     } else {
       updated += 1;
     }

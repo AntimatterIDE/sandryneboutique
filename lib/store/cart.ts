@@ -5,17 +5,23 @@ import { persist } from "zustand/middleware";
 
 export interface CartItem {
   productId: string;
+  /** Heartland size/color variant id when linked; null for legacy products. */
+  variantId: string | null;
   slug: string;
   name: string;
   price: number;
   image: string | null;
   size: string | null;
   color: string | null;
+  heartlandPublicId?: string | null;
   quantity: number;
   maxQuantity: number;
 }
 
-export function cartLineKey(item: Pick<CartItem, "productId" | "size" | "color">): string {
+export function cartLineKey(
+  item: Pick<CartItem, "variantId" | "productId" | "size" | "color">
+): string {
+  if (item.variantId) return `variant::${item.variantId}`;
   return `${item.productId}::${item.size ?? ""}::${item.color ?? ""}`;
 }
 
@@ -74,8 +80,10 @@ export const useCart = create<CartState>()(
       clearCart: () => set({ items: [] }),
     }),
     {
-      name: "sandryne-cart",
+      name: "sandryne-cart-v2",
       partialize: (state) => ({ items: state.items }),
+      version: 2,
+      migrate: () => ({ items: [] }),
     }
   )
 );

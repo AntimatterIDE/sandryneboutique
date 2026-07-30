@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { FALLBACK_PRODUCTS } from "@/lib/data/fallback-catalog";
 import { CATEGORIES, getCategory } from "@/lib/constants";
-import type { Product } from "@/lib/types";
+import type { Product, ProductVariant } from "@/lib/types";
 import { effectivePrice } from "@/lib/types";
 
 export type ProductSort = "newest" | "price-asc" | "price-desc";
@@ -26,6 +26,8 @@ export interface ProductQuery {
    * Set false for admin / internal lookups.
    */
   shoppableOnly?: boolean;
+  /** When true, attach `variants` to each product. */
+  includeVariants?: boolean;
 }
 
 export interface ProductPageResult {
@@ -45,6 +47,97 @@ export function supabaseConfigured(): boolean {
 /** Customer-facing catalog rule: at least one photo and available inventory. */
 export function isShoppable(product: Product): boolean {
   return product.inventory_count > 0 && product.images.length > 0;
+}
+
+/**
+ * PostgREST `or` filters matching a term against product names and primary
+ * Heartland identifiers. Variant Item # matches are OR'd via product ids
+ * separately (see `productIdsMatchingVariantSearch`).
+ */
+export function productSearchFilters(rawTerm: string, extraProductIds: string[] = []): string[] {
+  const term = rawTerm.trim().replace(/[%_,(){}"\\]/g, "");
+  if (!term) return [];
+
+  const filters = [
+    `name.ilike.%${term}%`,
+    `slug.ilike.%${term}%`,
+    `heartland_public_id.ilike.%${term}%`,
+  ];
+
+  if (/^\d+$/.test(term)) {
+    filters.push(`heartland_item_id.eq.${Number(term)}`);
+  }
+
+  if (extraProductIds.length > 0) {
+    filters.push(`id.in.(${extraProductIds.join(",")})`);
+  }
+
+  return filters;
+}
+
+export async function productIdsMatchingVariantSearch(term: string): Promise<string[]> {
+  const cleaned = term.trim().replace(/[%_,(){}"\\]/g, "");
+  if (!cleaned || !supabaseConfigured()) return [];
+
+  const supabase = await createClient();
+  const filters = [`heartland_public_id.ilike.%${cleaned}%`];
+  if (/^\d+$/.test(cleaned)) {
+    filters.push(`heartland_item_id.eq.${Number(cleaned)}`);
+  }
+
+  const { data, error } = await supabase
+    .from("product_variants")
+    .select("product_id")
+    .or(filters.join(","))
+    .limit(200);
+
+  if (error) {
+    console.error("Variant search failed:", error);
+    return [];
+  }
+
+  return [...new Set((data ?? []).map((row) => row.product_id as string))];
+}
+
+export async function getVariantsByProductIds(
+  productIds: string[]
+): Promise<Map<string, ProductVariant[]>> {
+  const map = new Map<string, ProductVariant[]>();
+  if (productIds.length === 0) return map;
+
+  if (!supabaseConfigured()) {
+    for (const id of productIds) {
+      const product = FALLBACK_PRODUCTS.find((p) => p.id === id);
+      map.set(id, product?.variants ?? []);
+    }
+    return map;
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("product_variants")
+    .select("*")
+    .in("product_id", productIds)
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    console.error("Failed to fetch product variants:", error);
+    return map;
+  }
+
+  for (const row of (data ?? []) as ProductVariant[]) {
+    const list = map.get(row.product_id) ?? [];
+    list.push(row);
+    map.set(row.product_id, list);
+  }
+  return map;
+}
+
+async function attachVariants(products: Product[]): Promise<Product[]> {
+  if (products.length === 0) return products;
+  const byProduct = await getVariantsByProductIds(products.map((p) => p.id));
+  return products.map((p) => ({ ...p, variants: byProduct.get(p.id) ?? [] }));
 }
 
 function resolveCollectionFlags(q: ProductQuery): ProductQuery {
@@ -80,12 +173,17 @@ function applyLocalQuery(products: Product[], raw: ProductQuery): Product[] {
     if (q.color && !p.colors.includes(q.color)) return false;
     if (q.search) {
       const needle = q.search.toLowerCase();
+      const variantHay = (p.variants ?? [])
+        .flatMap((v) => [v.heartland_public_id, v.heartland_item_id, v.size, v.color])
+        .filter((value) => value != null)
+        .join(" ");
       const hay = [
         p.name,
         p.slug,
         p.description,
         p.heartland_public_id,
         p.heartland_item_id,
+        variantHay,
       ]
         .filter((value) => value != null)
         .join(" ")
@@ -161,16 +259,9 @@ export async function getProductsPage(raw: ProductQuery = {}): Promise<ProductPa
   if (q.size) query = query.contains("sizes", [q.size]);
   if (q.color) query = query.contains("colors", [q.color]);
   if (q.search?.trim()) {
-    const term = q.search.trim().replace(/[%_,]/g, "");
-    const searchFilters = [
-      `name.ilike.%${term}%`,
-      `slug.ilike.%${term}%`,
-      `heartland_public_id.ilike.%${term}%`,
-    ];
-    if (/^\d+$/.test(term)) {
-      searchFilters.push(`heartland_item_id.eq.${Number(term)}`);
-    }
-    query = query.or(searchFilters.join(","));
+    const variantProductIds = await productIdsMatchingVariantSearch(q.search);
+    const searchFilters = productSearchFilters(q.search, variantProductIds);
+    if (searchFilters.length > 0) query = query.or(searchFilters.join(","));
   }
 
   switch (q.sort) {
@@ -200,7 +291,11 @@ export async function getProductsPage(raw: ProductQuery = {}): Promise<ProductPa
       if (q.maxPrice != null && price > q.maxPrice) return false;
       return true;
     });
-    return paginateLocal(products, page, pageSize);
+    const pageResult = paginateLocal(products, page, pageSize);
+    if (q.includeVariants) {
+      pageResult.products = await attachVariants(pageResult.products);
+    }
+    return pageResult;
   }
 
   const from = (page - 1) * pageSize;
@@ -214,8 +309,12 @@ export async function getProductsPage(raw: ProductQuery = {}): Promise<ProductPa
 
   const total = count ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  let products = (data ?? []) as Product[];
+  if (q.includeVariants) {
+    products = await attachVariants(products);
+  }
   return {
-    products: (data ?? []) as Product[],
+    products,
     total,
     page: Math.min(page, totalPages),
     pageSize,
@@ -239,7 +338,11 @@ export async function getProductBySlug(slug: string): Promise<Product | null> {
     console.error("Failed to fetch product:", error);
     return null;
   }
-  return data as Product | null;
+  if (!data) return null;
+
+  const product = data as Product;
+  const variants = await getVariantsByProductIds([product.id]);
+  return { ...product, variants: variants.get(product.id) ?? [] };
 }
 
 export interface MenuProduct {
