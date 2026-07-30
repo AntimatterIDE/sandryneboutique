@@ -84,6 +84,8 @@ export function PurchasePanel({ product }: PurchasePanelProps) {
         ? product.sale_price
         : selectedVariant.price || effectivePrice(product)
       : effectivePrice(product);
+  const itemNumber =
+    selectedVariant?.heartland_public_id ?? product.heartland_public_id;
 
   // With variants: sold-out only after an exact size/color is chosen (or the
   // parent aggregate is already zero). Legacy products use product inventory.
@@ -157,6 +159,12 @@ export function PurchasePanel({ product }: PurchasePanelProps) {
 
   return (
     <div className="flex flex-col gap-7">
+      {itemNumber && (
+        <p className="text-[11px] tracking-[0.16em] uppercase text-muted-foreground -mb-3">
+          Item # <span className="font-mono tracking-normal">{itemNumber}</span>
+        </p>
+      )}
+
       {colors.length > 0 && (
         <div>
           <div className="flex items-baseline justify-between mb-3">

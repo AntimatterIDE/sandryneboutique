@@ -139,7 +139,13 @@ export function FilterBar({
           event.preventDefault();
           const form = new FormData(event.currentTarget);
           const query = String(form.get("q") ?? "").trim();
-          navigate({ q: query || null });
+          navigate({
+            q: query || null,
+            category: null,
+            size: null,
+            color: null,
+            max: null,
+          });
         }}
       >
         <div className="relative flex-1">
@@ -149,7 +155,7 @@ export function FilterBar({
             name="q"
             type="search"
             defaultValue={currentQuery ?? ""}
-            placeholder="Search products…"
+            placeholder="Search products or Item #…"
             aria-label="Search products"
             className="h-11 rounded-none border-r-0 pl-10"
           />
