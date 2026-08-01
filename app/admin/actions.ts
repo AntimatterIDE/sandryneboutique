@@ -14,8 +14,6 @@ export interface ActionResult {
 export type ProductImageUploadResult =
   | {
       ok: true;
-      path: string;
-      token: string;
       publicUrl: string;
     }
   | {
@@ -74,36 +72,55 @@ const PRODUCT_IMAGE_EXTENSIONS: Record<string, string> = {
   "image/avif": "avif",
   "image/gif": "gif",
   "image/jpeg": "jpg",
+  "image/jpg": "jpg",
   "image/png": "png",
   "image/webp": "webp",
 };
 
-export async function createProductImageUpload(
-  contentType: string,
-  size: number
+/**
+ * Upload a product image with the privileged server client.
+ * Avoids browser Storage RLS failures under AUTH_BYPASS demo mode.
+ */
+export async function uploadProductImage(
+  formData: FormData
 ): Promise<ProductImageUploadResult> {
   const denied = await requireAdmin();
   if (denied) return { ok: false, message: denied.message };
 
-  const extension = PRODUCT_IMAGE_EXTENSIONS[contentType];
+  const file = formData.get("file");
+  if (!(file instanceof File)) {
+    return { ok: false, message: "Choose an image file to upload." };
+  }
+
+  if (file.type === "image/heic" || file.type === "image/heif") {
+    return {
+      ok: false,
+      message: "iPhone HEIC photos aren’t supported — export as JPG or PNG first.",
+    };
+  }
+
+  const extension = PRODUCT_IMAGE_EXTENSIONS[file.type];
   if (!extension) {
     return { ok: false, message: "Choose a JPG, PNG, WebP, AVIF, or GIF image." };
   }
-  if (!Number.isFinite(size) || size <= 0 || size > 10 * 1024 * 1024) {
+  if (!Number.isFinite(file.size) || file.size <= 0 || file.size > 10 * 1024 * 1024) {
     return { ok: false, message: "Images must be smaller than 10MB." };
   }
 
   const path = `${crypto.randomUUID()}.${extension}`;
+  const bytes = Buffer.from(await file.arrayBuffer());
   const supabase = await createPrivilegedClient();
-  const { data, error } = await supabase.storage
-    .from("product-images")
-    .createSignedUploadUrl(path);
+  const { error } = await supabase.storage.from("product-images").upload(path, bytes, {
+    cacheControl: "31536000",
+    contentType: file.type,
+    upsert: false,
+  });
 
-  if (error || !data?.token) {
-    console.error("Product image upload authorization failed:", error);
+  if (error) {
+    console.error("Product image upload failed:", error);
     return {
       ok: false,
-      message: "Could not authorize the image upload. Please try again.",
+      message: error.message || "Could not upload that image. Please try again.",
     };
   }
 
@@ -111,7 +128,7 @@ export async function createProductImageUpload(
     data: { publicUrl },
   } = supabase.storage.from("product-images").getPublicUrl(path);
 
-  return { ok: true, path, token: data.token, publicUrl };
+  return { ok: true, publicUrl };
 }
 
 function validateProduct(input: ProductInput): string | null {
@@ -129,7 +146,6 @@ function validateProduct(input: ProductInput): string | null {
   if (input.on_sale && (input.sale_price == null || input.sale_price <= 0)) {
     return "Sale price is required when the product is on sale.";
   }
-  if (input.images.length === 0) return "Add at least one product image.";
 
   if (input.variants.length === 0) {
     return "Add at least one size/color variant linked to a Heartland Item #.";
@@ -628,6 +644,9 @@ export interface HeartlandItemLookup {
   description: string;
   price: number;
   inventory_count: number;
+  category: string | null;
+  vendor: string | null;
+  style: string | null;
   sizes: string[];
   colors: string[];
   variants: HeartlandVariantLookup[];
@@ -672,6 +691,9 @@ export async function lookupHeartlandItem(rawId: string): Promise<HeartlandLooku
         description: grid.description,
         price: grid.price,
         inventory_count: grid.inventory_count,
+        category: grid.category,
+        vendor: grid.vendor,
+        style: grid.style,
         sizes: grid.sizes,
         colors: grid.colors,
         variants: grid.variants.map((variant) => ({

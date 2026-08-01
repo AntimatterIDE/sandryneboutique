@@ -6,8 +6,7 @@ import { ArrowLeft, ArrowRight, Loader2, Plus, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { createProductImageUpload } from "@/app/admin/actions";
-import { createClient } from "@/lib/supabase/client";
+import { uploadProductImage } from "@/app/admin/actions";
 
 interface ImageManagerProps {
   images: string[];
@@ -19,17 +18,10 @@ export function ImageManager({ images, onChange }: ImageManagerProps) {
   const [uploading, setUploading] = useState(false);
   const [urlDraft, setUrlDraft] = useState("");
 
-  const supabaseReady = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL);
-
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    if (!supabaseReady) {
-      toast.error("Supabase Storage is not configured — add an image URL instead.");
-      return;
-    }
 
     setUploading(true);
-    const supabase = createClient();
     const uploaded: string[] = [];
 
     try {
@@ -43,26 +35,15 @@ export function ImageManager({ images, onChange }: ImageManagerProps) {
           continue;
         }
 
-        const ticket = await createProductImageUpload(file.type, file.size);
-        if (!ticket.ok) {
-          toast.error(`Upload failed for ${file.name}: ${ticket.message}`);
+        const formData = new FormData();
+        formData.set("file", file);
+        const result = await uploadProductImage(formData);
+        if (!result.ok) {
+          toast.error(`Upload failed for ${file.name}: ${result.message}`);
           continue;
         }
 
-        const { error } = await supabase.storage
-          .from("product-images")
-          .uploadToSignedUrl(ticket.path, ticket.token, file, {
-            cacheControl: "31536000",
-            contentType: file.type,
-          });
-
-        if (error) {
-          console.error("Image upload failed:", error);
-          toast.error(`Upload failed for ${file.name}: ${error.message}`);
-          continue;
-        }
-
-        uploaded.push(ticket.publicUrl);
+        uploaded.push(result.publicUrl);
       }
 
       if (uploaded.length > 0) {
@@ -148,7 +129,7 @@ export function ImageManager({ images, onChange }: ImageManagerProps) {
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept="image/jpeg,image/png,image/webp,image/avif,image/gif"
           multiple
           className="hidden"
           onChange={(e) => handleFiles(e.target.files)}
@@ -187,6 +168,9 @@ export function ImageManager({ images, onChange }: ImageManagerProps) {
           </Button>
         </div>
       </div>
+      <p className="text-xs text-muted-foreground">
+        Images are optional. JPG/PNG/WebP up to 10MB. Products without photos stay hidden from the shop until you add one.
+      </p>
     </div>
   );
 }

@@ -5,6 +5,10 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["globalpayments-api"],
   experimental: {
     optimizePackageImports: ["lucide-react", "motion/react", "gsap"],
+    // Admin product photos are uploaded via Server Actions (default limit is 1MB).
+    serverActions: {
+      bodySizeLimit: "12mb",
+    },
   },
   images: {
     remotePatterns: [
@@ -15,6 +19,11 @@ const nextConfig: NextConfig = {
       {
         protocol: "https",
         hostname: "*.supabase.co",
+        pathname: "/storage/v1/object/public/**",
+      },
+      {
+        protocol: "https",
+        hostname: "tdijcktimzvgeaozzyjz.supabase.co",
         pathname: "/storage/v1/object/public/**",
       },
     ],

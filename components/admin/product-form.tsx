@@ -187,9 +187,18 @@ export function ProductForm({ product }: ProductFormProps) {
         }
         const item = result.item;
         setName(item.name);
-        if (!slugTouched) setSlug(slugify(item.name));
+        if (!slugTouched) {
+          const baseSlug = slugify(item.name);
+          const styleSlug = item.style ? slugify(item.style) : "";
+          setSlug(
+            styleSlug && !baseSlug.includes(styleSlug)
+              ? `${baseSlug}-${styleSlug}`
+              : baseSlug || `item-${item.heartland_public_id ?? query}`
+          );
+        }
         setDescription(item.description);
         setPrice(String(item.price));
+        if (item.category) setCategory(item.category);
         setLookupQuery(item.heartland_public_id ?? query);
         setVariants(
           item.variants.map((variant, index) => ({
@@ -475,7 +484,12 @@ export function ProductForm({ product }: ProductFormProps) {
       </div>
 
       <div className="space-y-3">
-        <Label>Images</Label>
+        <div>
+          <Label>Images</Label>
+          <p className="text-xs text-muted-foreground mt-1">
+            Optional — you can save the product now and add photos later.
+          </p>
+        </div>
         <ImageManager images={images} onChange={setImages} />
       </div>
 

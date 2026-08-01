@@ -40,9 +40,75 @@ export interface HeartlandGridLookup {
   price: number;
   inventory_count: number;
   heartland_grid_id: number | null;
+  /** Mapped storefront category slug when Heartland custom.category is known. */
+  category: string | null;
+  vendor: string | null;
+  style: string | null;
   sizes: string[];
   colors: string[];
   variants: HeartlandGridVariant[];
+}
+
+const GENERIC_STYLE_NAMES = new Set([
+  "top",
+  "tops",
+  "dress",
+  "dresses",
+  "jean",
+  "jeans",
+  "pant",
+  "pants",
+  "tee",
+  "skirt",
+  "blouse",
+  "sweater",
+  "cardigan",
+  "jacket",
+  "vest",
+  "short",
+  "shorts",
+  "belt",
+  "bag",
+  "handbag",
+  "cami",
+  "tank",
+]);
+
+const HEARTLAND_CATEGORY_MAP: Record<string, string> = {
+  tops: "tops",
+  top: "tops",
+  bottoms: "bottoms",
+  bottom: "bottoms",
+  dresses: "dresses",
+  dress: "dresses",
+  "active wear": "active-wear",
+  "active-wear": "active-wear",
+  activewear: "active-wear",
+  accessories: "accessories-jewelry",
+  jewelry: "accessories-jewelry",
+  "accessories & jewelry": "accessories-jewelry",
+  "accessories-jewelry": "accessories-jewelry",
+};
+
+export function mapHeartlandCategory(raw: string | null | undefined): string | null {
+  if (!raw?.trim()) return null;
+  return HEARTLAND_CATEGORY_MAP[raw.trim().toLowerCase()] ?? null;
+}
+
+/** Prefer vendor + style when Heartland only stores a generic garment type like "TOP". */
+export function buildHeartlandProductName(
+  parsedName: string,
+  custom?: Record<string, unknown> | null
+): string {
+  const base = parsedName.trim() || "Untitled";
+  const vendor = customString(custom, ["vendor", "Vendor"]);
+  const style = customString(custom, ["style1", "Style1", "style", "Style"]);
+  const isGeneric = GENERIC_STYLE_NAMES.has(base.toLowerCase());
+
+  if (isGeneric && vendor && style) return `${vendor} ${base} ${style}`;
+  if (isGeneric && style) return `${base} ${style}`;
+  if (isGeneric && vendor) return `${vendor} ${base}`;
+  return base;
 }
 
 const SIZE_ORDER = [
@@ -357,13 +423,25 @@ export async function lookupItemGrid(rawId: string): Promise<HeartlandGridLookup
   const price =
     variants.find((v) => v.heartland_item_id === seed.id)?.price ??
     (Number(seed.price) || 0);
+  const vendor = customString(seed.custom, ["vendor", "Vendor"]);
+  const style = customString(seed.custom, ["style1", "Style1", "style", "Style"]);
+  const category = mapHeartlandCategory(
+    customString(seed.custom, ["category", "Category"])
+  );
+  const name = buildHeartlandProductName(
+    seedOpts.name || (seed.description || "").trim() || `Item ${seed.id}`,
+    seed.custom
+  );
 
   return {
-    name: seedOpts.name || (seed.description || "").trim() || `Item ${seed.id}`,
-    description: (seed.long_description || seedOpts.name || seed.description || "").trim(),
+    name,
+    description: (seed.long_description || name || seed.description || "").trim(),
     price,
     inventory_count,
     heartland_grid_id: gridId,
+    category,
+    vendor,
+    style,
     sizes,
     colors,
     variants,
