@@ -6,11 +6,17 @@ import { ArrowLeft, ArrowRight, Loader2, Plus, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { uploadProductImage } from "@/app/admin/actions";
+import { createProductImageUpload } from "@/app/admin/actions";
+import { createClient } from "@/lib/supabase/client";
 
 interface ImageManagerProps {
   images: string[];
   onChange: (images: string[]) => void;
+}
+
+function looksLikeImage(file: File): boolean {
+  if (file.type.startsWith("image/")) return true;
+  return /\.(avif|gif|jpe?g|png|webp)$/i.test(file.name);
 }
 
 export function ImageManager({ images, onChange }: ImageManagerProps) {
@@ -18,16 +24,27 @@ export function ImageManager({ images, onChange }: ImageManagerProps) {
   const [uploading, setUploading] = useState(false);
   const [urlDraft, setUrlDraft] = useState("");
 
+  const supabaseReady = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL);
+
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
+    if (!supabaseReady) {
+      toast.error("Supabase Storage is not configured — add an image URL instead.");
+      return;
+    }
 
     setUploading(true);
+    const supabase = createClient();
     const uploaded: string[] = [];
 
     try {
       for (const file of Array.from(files)) {
-        if (!file.type.startsWith("image/")) {
+        if (!looksLikeImage(file)) {
           toast.error(`${file.name} is not an image.`);
+          continue;
+        }
+        if (file.type === "image/heic" || file.type === "image/heif") {
+          toast.error(`${file.name}: export iPhone photos as JPG or PNG first.`);
           continue;
         }
         if (file.size > 10 * 1024 * 1024) {
@@ -35,15 +52,32 @@ export function ImageManager({ images, onChange }: ImageManagerProps) {
           continue;
         }
 
-        const formData = new FormData();
-        formData.set("file", file);
-        const result = await uploadProductImage(formData);
-        if (!result.ok) {
-          toast.error(`Upload failed for ${file.name}: ${result.message}`);
+        const ticket = await createProductImageUpload(file.type, file.size, file.name);
+        if (!ticket.ok) {
+          toast.error(`Upload failed for ${file.name}: ${ticket.message}`);
           continue;
         }
 
-        uploaded.push(result.publicUrl);
+        const ext = ticket.path.split(".").pop() ?? "jpeg";
+        const contentType =
+          file.type && file.type !== "application/octet-stream"
+            ? file.type
+            : `image/${ext === "jpg" ? "jpeg" : ext}`;
+
+        const { error } = await supabase.storage
+          .from("product-images")
+          .uploadToSignedUrl(ticket.path, ticket.token, file, {
+            cacheControl: "31536000",
+            contentType,
+          });
+
+        if (error) {
+          console.error("Image upload failed:", error);
+          toast.error(`Upload failed for ${file.name}: ${error.message}`);
+          continue;
+        }
+
+        uploaded.push(ticket.publicUrl);
       }
 
       if (uploaded.length > 0) {
@@ -129,7 +163,7 @@ export function ImageManager({ images, onChange }: ImageManagerProps) {
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/jpeg,image/png,image/webp,image/avif,image/gif"
+          accept="image/jpeg,image/png,image/webp,image/avif,image/gif,.jpg,.jpeg,.png,.webp,.avif,.gif"
           multiple
           className="hidden"
           onChange={(e) => handleFiles(e.target.files)}

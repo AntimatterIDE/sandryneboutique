@@ -1,6 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { isAuthBypassEnabled } from "@/lib/auth-config";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
@@ -33,11 +32,12 @@ export async function createClient() {
 }
 
 /**
- * Server client with admin privileges when AUTH_BYPASS=true.
- * Use for admin reads/writes that normally require a signed-in admin session.
+ * Server client with elevated privileges when a service-role key is available.
+ * Prefer this for admin mutations (after an auth/role check) so AUTH_BYPASS
+ * demo mode and missing browser sessions do not trip Storage/RLS policies.
  */
 export async function createPrivilegedClient() {
-  if (isAuthBypassEnabled() && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return createAdminClient();
   }
   return createClient();

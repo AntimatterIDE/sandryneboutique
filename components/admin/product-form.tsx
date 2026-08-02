@@ -31,6 +31,7 @@ import {
   deleteProduct,
   lookupHeartlandItem,
   updateProduct,
+  updateProductImages,
   type ProductInput,
   type VariantInput,
 } from "@/app/admin/actions";
@@ -111,13 +112,12 @@ export function ProductForm({ product }: ProductFormProps) {
   );
   const [lookupPending, setLookupPending] = useState(false);
 
-  const totalInventory = useMemo(
-    () =>
-      variants
-        .filter((v) => v.active)
-        .reduce((sum, v) => sum + (Number.parseInt(v.inventory_count, 10) || 0), 0),
-    [variants]
-  );
+  const totalInventory = useMemo(() => {
+    if (variants.length === 0) return product?.inventory_count ?? 0;
+    return variants
+      .filter((v) => v.active)
+      .reduce((sum, v) => sum + (Number.parseInt(v.inventory_count, 10) || 0), 0);
+  }, [variants, product?.inventory_count]);
 
   const updateVariant = (key: string, patch: Partial<DraftVariant>) => {
     setVariants((current) =>
@@ -223,8 +223,31 @@ export function ProductForm({ product }: ProductFormProps) {
     });
   };
 
+  const handleImagesChange = (next: string[]) => {
+    setImages(next);
+    if (!product) return;
+    startTransition(async () => {
+      const result = await updateProductImages(product.id, next);
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!category) {
+      toast.error("Please choose a category before saving.");
+      return;
+    }
+    if (!isEdit && variants.length === 0) {
+      toast.error("Look up a Heartland Item # first so this product has size/color variants.");
+      return;
+    }
+
     startTransition(async () => {
       const input = buildInput();
       const result = product
@@ -383,7 +406,9 @@ export function ProductForm({ product }: ProductFormProps) {
 
         {variants.length === 0 ? (
           <div className="border border-dashed border-foreground/15 px-4 py-8 text-center text-sm text-muted-foreground">
-            Look up a Heartland Item # to load size/color variants.
+            {isEdit
+              ? "No Heartland variants linked yet. You can still save photos and details — look up an Item # when you’re ready to sell this style online."
+              : "Look up a Heartland Item # to load size/color variants before creating."}
           </div>
         ) : (
           <div className="border border-foreground/10 overflow-x-auto">
@@ -490,7 +515,7 @@ export function ProductForm({ product }: ProductFormProps) {
             Optional — you can save the product now and add photos later.
           </p>
         </div>
-        <ImageManager images={images} onChange={setImages} />
+        <ImageManager images={images} onChange={handleImagesChange} />
       </div>
 
       <div className="flex flex-wrap gap-8">

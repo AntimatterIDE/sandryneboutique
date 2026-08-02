@@ -14,6 +14,8 @@ export interface ActionResult {
 export type ProductImageUploadResult =
   | {
       ok: true;
+      path: string;
+      token: string;
       publicUrl: string;
     }
   | {
@@ -77,50 +79,70 @@ const PRODUCT_IMAGE_EXTENSIONS: Record<string, string> = {
   "image/webp": "webp",
 };
 
+const PRODUCT_IMAGE_NAME_EXTENSIONS: Record<string, string> = {
+  avif: "avif",
+  gif: "gif",
+  jpeg: "jpg",
+  jpg: "jpg",
+  png: "png",
+  webp: "webp",
+};
+
+function extensionForImageUpload(contentType: string, fileName?: string): string | null {
+  const normalizedType = contentType.trim().toLowerCase();
+  if (normalizedType === "image/heic" || normalizedType === "image/heif") {
+    return null;
+  }
+  if (PRODUCT_IMAGE_EXTENSIONS[normalizedType]) {
+    return PRODUCT_IMAGE_EXTENSIONS[normalizedType];
+  }
+  const match = fileName?.toLowerCase().match(/\.([a-z0-9]+)$/);
+  if (match && PRODUCT_IMAGE_NAME_EXTENSIONS[match[1]]) {
+    return PRODUCT_IMAGE_NAME_EXTENSIONS[match[1]];
+  }
+  return null;
+}
+
 /**
- * Upload a product image with the privileged server client.
- * Avoids browser Storage RLS failures under AUTH_BYPASS demo mode.
+ * Authorize a direct browser → Supabase Storage upload.
+ * Keeps large photos off the Vercel request body while still using the
+ * privileged server client so AUTH_BYPASS / RLS cannot block admins.
  */
-export async function uploadProductImage(
-  formData: FormData
+export async function createProductImageUpload(
+  contentType: string,
+  size: number,
+  fileName?: string
 ): Promise<ProductImageUploadResult> {
   const denied = await requireAdmin();
   if (denied) return { ok: false, message: denied.message };
 
-  const file = formData.get("file");
-  if (!(file instanceof File)) {
-    return { ok: false, message: "Choose an image file to upload." };
-  }
-
-  if (file.type === "image/heic" || file.type === "image/heif") {
+  const normalizedType = contentType.trim().toLowerCase();
+  if (normalizedType === "image/heic" || normalizedType === "image/heif") {
     return {
       ok: false,
       message: "iPhone HEIC photos aren’t supported — export as JPG or PNG first.",
     };
   }
 
-  const extension = PRODUCT_IMAGE_EXTENSIONS[file.type];
+  const extension = extensionForImageUpload(contentType, fileName);
   if (!extension) {
     return { ok: false, message: "Choose a JPG, PNG, WebP, AVIF, or GIF image." };
   }
-  if (!Number.isFinite(file.size) || file.size <= 0 || file.size > 10 * 1024 * 1024) {
+  if (!Number.isFinite(size) || size <= 0 || size > 10 * 1024 * 1024) {
     return { ok: false, message: "Images must be smaller than 10MB." };
   }
 
   const path = `${crypto.randomUUID()}.${extension}`;
-  const bytes = Buffer.from(await file.arrayBuffer());
   const supabase = await createPrivilegedClient();
-  const { error } = await supabase.storage.from("product-images").upload(path, bytes, {
-    cacheControl: "31536000",
-    contentType: file.type,
-    upsert: false,
-  });
+  const { data, error } = await supabase.storage
+    .from("product-images")
+    .createSignedUploadUrl(path);
 
-  if (error) {
-    console.error("Product image upload failed:", error);
+  if (error || !data?.token) {
+    console.error("Product image upload authorization failed:", error);
     return {
       ok: false,
-      message: error.message || "Could not upload that image. Please try again.",
+      message: error?.message || "Could not authorize the image upload. Please try again.",
     };
   }
 
@@ -128,10 +150,13 @@ export async function uploadProductImage(
     data: { publicUrl },
   } = supabase.storage.from("product-images").getPublicUrl(path);
 
-  return { ok: true, publicUrl };
+  return { ok: true, path, token: data.token, publicUrl };
 }
 
-function validateProduct(input: ProductInput): string | null {
+function validateProduct(
+  input: ProductInput,
+  options: { requireVariants: boolean }
+): string | null {
   if (!input.name?.trim()) return "Product name is required.";
   if (!input.slug?.trim() || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(input.slug)) {
     return "Slug must be lowercase letters, numbers, and hyphens (e.g. silk-slip-dress).";
@@ -147,8 +172,8 @@ function validateProduct(input: ProductInput): string | null {
     return "Sale price is required when the product is on sale.";
   }
 
-  if (input.variants.length === 0) {
-    return "Add at least one size/color variant linked to a Heartland Item #.";
+  if (options.requireVariants && input.variants.length === 0) {
+    return "Look up a Heartland Item # first so this product has size/color variants.";
   }
 
   const seenPublic = new Set<string>();
@@ -197,7 +222,7 @@ function productRowFromInput(input: ProductInput) {
         .filter((value): value is string => Boolean(value))
     ),
   ];
-  const inventory_count = input.variants
+  const variantInventory = input.variants
     .filter((v) => v.active)
     .reduce((sum, v) => sum + v.inventory_count, 0);
   const primary = input.variants[0];
@@ -207,7 +232,8 @@ function productRowFromInput(input: ProductInput) {
     description: input.description,
     price: input.price,
     images: input.images,
-    inventory_count,
+    // Legacy products may have no variants yet — keep the form's inventory mirror.
+    inventory_count: input.variants.length > 0 ? variantInventory : input.inventory_count,
     category: input.category,
     slug: input.slug,
     sizes: sizes.length > 0 ? sizes : input.sizes,
@@ -295,7 +321,7 @@ export async function createProduct(input: ProductInput): Promise<ActionResult> 
   const denied = await requireAdmin();
   if (denied) return denied;
 
-  const invalid = validateProduct(input);
+  const invalid = validateProduct(input, { requireVariants: true });
   if (invalid) return { ok: false, message: invalid };
 
   const supabase = await createPrivilegedClient();
@@ -308,12 +334,16 @@ export async function createProduct(input: ProductInput): Promise<ActionResult> 
   if (error) {
     if (error.code === "23505") {
       if (error.message?.includes("heartland_item_id")) {
-        return { ok: false, message: "That Heartland item ID is already linked to another product." };
+        return {
+          ok: false,
+          message:
+            "That Heartland item ID is already linked to another product. Open the existing product or use a different Item #.",
+        };
       }
       return { ok: false, message: "That slug is already in use." };
     }
     console.error("Product create failed:", error);
-    return { ok: false, message: "Failed to create product. Please try again." };
+    return { ok: false, message: error.message || "Failed to create product. Please try again." };
   }
 
   const variantError = await syncProductVariants(supabase, data.id, input.variants);
@@ -330,31 +360,72 @@ export async function updateProduct(id: string, input: ProductInput): Promise<Ac
   const denied = await requireAdmin();
   if (denied) return denied;
 
-  const invalid = validateProduct(input);
+  // Legacy Shopify imports often have no Heartland variants yet — still allow
+  // photo/name/price edits. Creating a product still requires a Heartland grid.
+  const invalid = validateProduct(input, { requireVariants: false });
   if (invalid) return { ok: false, message: invalid };
 
   const supabase = await createPrivilegedClient();
-  const { error } = await supabase
-    .from("products")
-    .update(productRowFromInput(input))
-    .eq("id", id);
+  const row = productRowFromInput(input);
+  // Don't wipe Heartland ids when saving a legacy product with an empty variant list.
+  const {
+    heartland_item_id: _heartlandItemId,
+    heartland_public_id: _heartlandPublicId,
+    ...rowWithoutHeartland
+  } = row;
+  const updatePayload = input.variants.length > 0 ? row : rowWithoutHeartland;
+
+  const { error } = await supabase.from("products").update(updatePayload).eq("id", id);
 
   if (error) {
     if (error.code === "23505") {
       if (error.message?.includes("heartland_item_id")) {
-        return { ok: false, message: "That Heartland item ID is already linked to another product." };
+        return {
+          ok: false,
+          message:
+            "That Heartland item ID is already linked to another product. Open the existing product or use a different Item #.",
+        };
       }
       return { ok: false, message: "That slug is already in use." };
     }
     console.error("Product update failed:", error);
-    return { ok: false, message: "Failed to update product. Please try again." };
+    return { ok: false, message: error.message || "Failed to update product. Please try again." };
   }
 
-  const variantError = await syncProductVariants(supabase, id, input.variants);
-  if (variantError) return { ok: false, message: variantError };
+  if (input.variants.length > 0) {
+    const variantError = await syncProductVariants(supabase, id, input.variants);
+    if (variantError) return { ok: false, message: variantError };
+  }
 
   revalidateStore();
   return { ok: true, message: "Product updated.", id };
+}
+
+/** Persist product photos without requiring a full Heartland variant save. */
+export async function updateProductImages(
+  id: string,
+  images: string[]
+): Promise<ActionResult> {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  if (!Array.isArray(images) || images.some((url) => typeof url !== "string" || !url.trim())) {
+    return { ok: false, message: "Image list is invalid." };
+  }
+
+  const supabase = await createPrivilegedClient();
+  const { error } = await supabase
+    .from("products")
+    .update({ images: images.map((url) => url.trim()) })
+    .eq("id", id);
+
+  if (error) {
+    console.error("Product image save failed:", error);
+    return { ok: false, message: error.message || "Failed to save product images." };
+  }
+
+  revalidateStore();
+  return { ok: true, message: "Images saved.", id };
 }
 
 export async function deleteProduct(id: string): Promise<ActionResult> {
