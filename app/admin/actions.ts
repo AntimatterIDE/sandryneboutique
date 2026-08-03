@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createPrivilegedClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getSessionInfo } from "@/lib/auth";
 import type { OrderStatus } from "@/lib/types";
 
@@ -14,8 +15,6 @@ export interface ActionResult {
 export type ProductImageUploadResult =
   | {
       ok: true;
-      path: string;
-      token: string;
       publicUrl: string;
     }
   | {
@@ -104,20 +103,30 @@ function extensionForImageUpload(contentType: string, fileName?: string): string
 }
 
 /**
- * Authorize a direct browser → Supabase Storage upload.
- * Keeps large photos off the Vercel request body while still using the
- * privileged server client so AUTH_BYPASS / RLS cannot block admins.
+ * Upload a product image server-side with the service-role client.
+ * Avoids browser Storage RLS failures under AUTH_BYPASS demo mode.
  */
-export async function createProductImageUpload(
-  contentType: string,
-  size: number,
-  fileName?: string
+export async function uploadProductImage(
+  formData: FormData
 ): Promise<ProductImageUploadResult> {
   const denied = await requireAdmin();
   if (denied) return { ok: false, message: denied.message };
 
-  const normalizedType = contentType.trim().toLowerCase();
-  if (normalizedType === "image/heic" || normalizedType === "image/heif") {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return {
+      ok: false,
+      message: "Server is missing SUPABASE_SERVICE_ROLE_KEY — cannot upload images.",
+    };
+  }
+
+  const file = formData.get("file");
+  if (!(file instanceof Blob)) {
+    return { ok: false, message: "Choose an image file to upload." };
+  }
+
+  const fileName = file instanceof File ? file.name : "upload";
+  const contentType = (file.type || "").trim().toLowerCase();
+  if (contentType === "image/heic" || contentType === "image/heif") {
     return {
       ok: false,
       message: "iPhone HEIC photos aren’t supported — export as JPG or PNG first.",
@@ -128,21 +137,29 @@ export async function createProductImageUpload(
   if (!extension) {
     return { ok: false, message: "Choose a JPG, PNG, WebP, AVIF, or GIF image." };
   }
-  if (!Number.isFinite(size) || size <= 0 || size > 10 * 1024 * 1024) {
+  if (!Number.isFinite(file.size) || file.size <= 0 || file.size > 10 * 1024 * 1024) {
     return { ok: false, message: "Images must be smaller than 10MB." };
   }
 
   const path = `${crypto.randomUUID()}.${extension}`;
-  const supabase = await createPrivilegedClient();
-  const { data, error } = await supabase.storage
-    .from("product-images")
-    .createSignedUploadUrl(path);
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const supabase = createAdminClient();
+  const resolvedType =
+    contentType && contentType !== "application/octet-stream"
+      ? contentType
+      : `image/${extension === "jpg" ? "jpeg" : extension}`;
 
-  if (error || !data?.token) {
-    console.error("Product image upload authorization failed:", error);
+  const { error } = await supabase.storage.from("product-images").upload(path, bytes, {
+    cacheControl: "31536000",
+    contentType: resolvedType,
+    upsert: false,
+  });
+
+  if (error) {
+    console.error("Product image upload failed:", error);
     return {
       ok: false,
-      message: error?.message || "Could not authorize the image upload. Please try again.",
+      message: error.message || "Could not upload that image. Please try again.",
     };
   }
 
@@ -150,7 +167,7 @@ export async function createProductImageUpload(
     data: { publicUrl },
   } = supabase.storage.from("product-images").getPublicUrl(path);
 
-  return { ok: true, path, token: data.token, publicUrl };
+  return { ok: true, publicUrl };
 }
 
 function validateProduct(
@@ -317,6 +334,54 @@ async function syncProductVariants(
   return null;
 }
 
+async function findExistingProductForVariants(
+  supabase: Awaited<ReturnType<typeof createPrivilegedClient>>,
+  variants: VariantInput[]
+): Promise<{ id: string; name: string; slug: string; images: string[] } | null> {
+  const itemIds = variants.map((v) => v.heartland_item_id).filter((id) => id > 0);
+  if (itemIds.length === 0) return null;
+
+  const { data: linkedVariants } = await supabase
+    .from("product_variants")
+    .select("product_id")
+    .in("heartland_item_id", itemIds)
+    .limit(1);
+  const fromVariant = linkedVariants?.[0]?.product_id as string | undefined;
+
+  const { data: linkedProducts } = await supabase
+    .from("products")
+    .select("id, name, slug, images")
+    .in("heartland_item_id", itemIds)
+    .limit(1);
+  const fromProduct = linkedProducts?.[0];
+
+  const productId = fromVariant ?? fromProduct?.id;
+  if (!productId) return null;
+
+  if (fromProduct && fromProduct.id === productId) {
+    return {
+      id: fromProduct.id,
+      name: fromProduct.name,
+      slug: fromProduct.slug,
+      images: Array.isArray(fromProduct.images) ? fromProduct.images : [],
+    };
+  }
+
+  const { data: product } = await supabase
+    .from("products")
+    .select("id, name, slug, images")
+    .eq("id", productId)
+    .maybeSingle();
+
+  if (!product) return null;
+  return {
+    id: product.id,
+    name: product.name,
+    slug: product.slug,
+    images: Array.isArray(product.images) ? product.images : [],
+  };
+}
+
 export async function createProduct(input: ProductInput): Promise<ActionResult> {
   const denied = await requireAdmin();
   if (denied) return denied;
@@ -325,6 +390,24 @@ export async function createProduct(input: ProductInput): Promise<ActionResult> 
   if (invalid) return { ok: false, message: invalid };
 
   const supabase = await createPrivilegedClient();
+
+  // Almost the whole catalog was imported already with Heartland IDs. Creating
+  // again just hit unique constraints — update that product instead.
+  const existing = await findExistingProductForVariants(supabase, input.variants);
+  if (existing) {
+    const merged: ProductInput = {
+      ...input,
+      images: input.images.length > 0 ? input.images : existing.images,
+    };
+    const updated = await updateProduct(existing.id, merged);
+    if (!updated.ok) return updated;
+    return {
+      ok: true,
+      message: `Updated existing product “${existing.name}”.`,
+      id: existing.id,
+    };
+  }
+
   const { data, error } = await supabase
     .from("products")
     .insert(productRowFromInput(input))
@@ -337,7 +420,7 @@ export async function createProduct(input: ProductInput): Promise<ActionResult> 
         return {
           ok: false,
           message:
-            "That Heartland item ID is already linked to another product. Open the existing product or use a different Item #.",
+            "That Heartland item ID is already linked to another product. Search for it in Products and add photos there.",
         };
       }
       return { ok: false, message: "That slug is already in use." };
@@ -725,7 +808,11 @@ export interface HeartlandItemLookup {
 }
 
 export type HeartlandLookupResult =
-  | { ok: true; item: HeartlandItemLookup }
+  | {
+      ok: true;
+      item: HeartlandItemLookup;
+      existingProduct?: { id: string; name: string; slug: string };
+    }
   | { ok: false; message: string };
 
 /**
@@ -751,6 +838,22 @@ export async function lookupHeartlandItem(rawId: string): Promise<HeartlandLooku
       grid.variants.find((v) => String(v.heartland_public_id) === trimmed) ??
       grid.variants.find((v) => String(v.heartland_item_id) === trimmed) ??
       grid.variants[0];
+
+    const supabase = await createPrivilegedClient();
+    const existing = await findExistingProductForVariants(
+      supabase,
+      grid.variants.map((variant, index) => ({
+        heartland_item_id: variant.heartland_item_id,
+        heartland_public_id: variant.heartland_public_id,
+        heartland_grid_id: variant.heartland_grid_id,
+        size: variant.size,
+        color: variant.color,
+        price: variant.price,
+        inventory_count: variant.inventory_count,
+        active: variant.active,
+        sort_order: variant.sort_order ?? index,
+      }))
+    );
 
     return {
       ok: true,
@@ -780,6 +883,9 @@ export async function lookupHeartlandItem(rawId: string): Promise<HeartlandLooku
         })),
         active: primary.active,
       },
+      existingProduct: existing
+        ? { id: existing.id, name: existing.name, slug: existing.slug }
+        : undefined,
     };
   } catch (err) {
     console.error("Heartland item lookup failed:", err);

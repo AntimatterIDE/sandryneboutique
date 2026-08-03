@@ -185,6 +185,16 @@ export function ProductForm({ product }: ProductFormProps) {
           toast.error(result.message);
           return;
         }
+
+        // Creating again for an Item # that already exists just fails — open it instead.
+        if (!isEdit && result.existingProduct) {
+          toast.message(
+            `“${result.existingProduct.name}” is already in the catalog — opening it so you can add photos.`
+          );
+          router.push(`/admin/products/${result.existingProduct.id}`);
+          return;
+        }
+
         const item = result.item;
         setName(item.name);
         if (!slugTouched) {
@@ -232,6 +242,7 @@ export function ProductForm({ product }: ProductFormProps) {
         toast.error(result.message);
         return;
       }
+      toast.success("Photos saved.");
       router.refresh();
     });
   };
@@ -512,7 +523,8 @@ export function ProductForm({ product }: ProductFormProps) {
         <div>
           <Label>Images</Label>
           <p className="text-xs text-muted-foreground mt-1">
-            Optional — you can save the product now and add photos later.
+            Most styles are already imported — search Products, open one, and upload photos there.
+            Photos auto-save on existing products.
           </p>
         </div>
         <ImageManager images={images} onChange={handleImagesChange} />

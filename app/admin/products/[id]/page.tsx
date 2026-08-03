@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { ProductForm } from "@/components/admin/product-form";
 import { getVariantsByProductIds } from "@/lib/data/products";
-import { createClient } from "@/lib/supabase/server";
+import { createPrivilegedClient } from "@/lib/supabase/server";
 import type { Product } from "@/lib/types";
 
 export const metadata: Metadata = {
@@ -16,7 +16,7 @@ export default async function EditProductPage({
 }) {
   const { id } = await params;
 
-  const supabase = await createClient();
+  const supabase = await createPrivilegedClient();
   const { data } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
   const product = data as Product | null;
   if (!product) notFound();
