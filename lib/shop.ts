@@ -19,7 +19,7 @@ export function shopHref(opts: ShopSearchParams = {}): string {
   if (opts.q?.trim()) params.set("q", opts.q.trim());
   if (opts.category) {
     const def = getCategory(opts.category);
-    if (def) params.set("category", def.slug);
+    params.set("category", def?.slug ?? opts.category);
   }
   if (opts.size) params.set("size", String(opts.size));
   if (opts.color) params.set("color", String(opts.color));

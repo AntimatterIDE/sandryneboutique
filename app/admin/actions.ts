@@ -52,6 +52,7 @@ export interface ProductInput {
   images: string[];
   inventory_count: number;
   category: string;
+  subcategory: string | null;
   slug: string;
   sizes: string[];
   colors: string[];
@@ -160,10 +161,10 @@ export async function createProductImageUpload(
   return { ok: true, path, token: data.token, publicUrl };
 }
 
-function validateProduct(
+async function validateProduct(
   input: ProductInput,
   options: { requireVariants: boolean }
-): string | null {
+): Promise<string | null> {
   if (!input.name?.trim()) return "Product name is required.";
   if (!input.slug?.trim() || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(input.slug)) {
     return "Slug must be lowercase letters, numbers, and hyphens (e.g. silk-slip-dress).";
@@ -172,8 +173,21 @@ function validateProduct(
   if (!Number.isInteger(input.inventory_count) || input.inventory_count < 0) {
     return "Inventory must be a non-negative whole number.";
   }
-  if (!PRODUCT_CATEGORIES.includes(input.category as (typeof PRODUCT_CATEGORIES)[number])) {
+  if (!input.category?.trim()) return "Please choose a valid category.";
+
+  const { getCategoryTree } = await import("@/lib/data/categories");
+  const tree = await getCategoryTree();
+  const parent = tree.find((c) => c.slug === input.category);
+  // Allow legacy hardcoded parents until migration 008 is applied / seeded.
+  const knownLegacy = (PRODUCT_CATEGORIES as readonly string[]).includes(input.category);
+  if (!parent && !knownLegacy) {
     return "Please choose a valid category.";
+  }
+  if (input.subcategory) {
+    const child = parent?.children.find((c) => c.slug === input.subcategory);
+    if (!child) {
+      return "Please choose a valid subcategory for that category.";
+    }
   }
   if (input.on_sale && (input.sale_price == null || input.sale_price <= 0)) {
     return "Sale price is required when the product is on sale.";
@@ -242,6 +256,7 @@ function productRowFromInput(input: ProductInput) {
     // Legacy products may have no variants yet — keep the form's inventory mirror.
     inventory_count: input.variants.length > 0 ? variantInventory : input.inventory_count,
     category: input.category,
+    subcategory: input.subcategory?.trim() || null,
     slug: input.slug,
     sizes: sizes.length > 0 ? sizes : input.sizes,
     colors: colors.length > 0 ? colors : input.colors,
@@ -376,7 +391,7 @@ export async function createProduct(input: ProductInput): Promise<ActionResult> 
   const denied = await requireAdmin();
   if (denied) return denied;
 
-  const invalid = validateProduct(input, { requireVariants: true });
+  const invalid = await validateProduct(input, { requireVariants: true });
   if (invalid) return { ok: false, message: invalid };
 
   const supabase = await createPrivilegedClient();
@@ -435,7 +450,7 @@ export async function updateProduct(id: string, input: ProductInput): Promise<Ac
 
   // Legacy Shopify imports often have no Heartland variants yet — still allow
   // photo/name/price edits. Creating a product still requires a Heartland grid.
-  const invalid = validateProduct(input, { requireVariants: false });
+  const invalid = await validateProduct(input, { requireVariants: false });
   if (invalid) return { ok: false, message: invalid };
 
   const supabase = await createPrivilegedClient();
@@ -887,4 +902,301 @@ export async function lookupHeartlandItem(rawId: string): Promise<HeartlandLooku
           : "Could not look up that Heartland item. Check your Retail credentials.",
     };
   }
+}
+
+function slugifyProductName(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/** True when the admin search box likely contains a Heartland Item # / id. */
+export function looksLikeHeartlandItemQuery(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+  if (/^\d{3,}$/.test(trimmed)) return true;
+  // Public ids / barcodes that include digits (e.g. mixed codes).
+  return /^[A-Za-z0-9._-]{3,40}$/.test(trimmed) && /\d/.test(trimmed);
+}
+
+async function allocateUniqueProductSlug(
+  supabase: Awaited<ReturnType<typeof createPrivilegedClient>>,
+  base: string
+): Promise<string> {
+  const root = slugifyProductName(base) || "item";
+  for (let n = 0; n < 50; n += 1) {
+    const candidate = n === 0 ? root : `${root}-${n + 1}`;
+    const { data } = await supabase
+      .from("products")
+      .select("id")
+      .eq("slug", candidate)
+      .maybeSingle();
+    if (!data) return candidate;
+  }
+  return `${root}-${Date.now()}`;
+}
+
+/**
+ * Look up a Heartland Item # / id, create the catalog product (or refresh an
+ * existing one), and return its id so admin search can open the edit page.
+ */
+export async function ensureProductFromHeartland(
+  rawId: string
+): Promise<ActionResult> {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  const trimmed = rawId.trim();
+  if (!looksLikeHeartlandItemQuery(trimmed)) {
+    return { ok: false, message: "Enter a Heartland Item # to import." };
+  }
+
+  const { lookupItemGrid } = await import("@/lib/heartland-retail");
+
+  let grid;
+  try {
+    grid = await lookupItemGrid(trimmed);
+  } catch (err) {
+    console.error("Heartland ensure lookup failed:", err);
+    return {
+      ok: false,
+      message:
+        err instanceof Error
+          ? err.message
+          : "Could not look up that Heartland item.",
+    };
+  }
+
+  if (!grid || grid.variants.length === 0) {
+    return { ok: false, message: `No Heartland item found for “${trimmed}”.` };
+  }
+
+  const supabase = await createPrivilegedClient();
+  const existing = await findExistingProductForVariants(
+    supabase,
+    grid.variants.map((variant, index) => ({
+      heartland_item_id: variant.heartland_item_id,
+      heartland_public_id: variant.heartland_public_id,
+      heartland_grid_id: variant.heartland_grid_id,
+      size: variant.size,
+      color: variant.color,
+      price: variant.price,
+      inventory_count: variant.inventory_count,
+      active: variant.active,
+      sort_order: variant.sort_order ?? index,
+    }))
+  );
+
+  const category = grid.category ?? "tops";
+  const slug = existing
+    ? existing.slug
+    : await allocateUniqueProductSlug(supabase, grid.name);
+
+  const input: ProductInput = {
+    name: grid.name,
+    description: grid.description,
+    price: grid.price,
+    images: existing?.images ?? [],
+    inventory_count: grid.inventory_count,
+    category,
+    subcategory: null,
+    slug,
+    sizes: grid.sizes,
+    colors: grid.colors,
+    is_new: true,
+    on_sale: false,
+    sale_price: null,
+    heartland_item_id: grid.variants[0]?.heartland_item_id ?? null,
+    heartland_public_id: grid.variants[0]?.heartland_public_id ?? null,
+    variants: grid.variants.map((variant, index) => ({
+      heartland_item_id: variant.heartland_item_id,
+      heartland_public_id: variant.heartland_public_id,
+      heartland_grid_id: variant.heartland_grid_id,
+      size: variant.size,
+      color: variant.color,
+      price: variant.price,
+      inventory_count: variant.inventory_count,
+      active: variant.active,
+      sort_order: variant.sort_order ?? index,
+    })),
+  };
+
+  // Preserve existing variant row ids so sync updates instead of duplicating.
+  if (existing) {
+    const { data: existingVariants } = await supabase
+      .from("product_variants")
+      .select("id, heartland_item_id")
+      .eq("product_id", existing.id);
+    const idByItem = new Map(
+      (existingVariants ?? []).map((row) => [
+        row.heartland_item_id as number,
+        row.id as string,
+      ])
+    );
+    input.variants = input.variants.map((variant) => ({
+      ...variant,
+      id: idByItem.get(variant.heartland_item_id),
+    }));
+
+    const updated = await updateProduct(existing.id, input);
+    if (!updated.ok) return updated;
+    return {
+      ok: true,
+      message: `Updated “${grid.name}” with live Heartland inventory.`,
+      id: existing.id,
+    };
+  }
+
+  const created = await createProduct(input);
+  if (!created.ok) return created;
+  return {
+    ok: true,
+    message: `Created “${grid.name}” from Heartland.`,
+    id: created.id,
+  };
+}
+
+export interface CategoryInput {
+  name: string;
+  slug: string;
+  description: string;
+  /** Null for top-level category; parent uuid for subcategory. */
+  parent_id: string | null;
+  sort_order: number;
+}
+
+function validateCategoryInput(input: CategoryInput): string | null {
+  if (!input.name?.trim()) return "Category name is required.";
+  if (!input.slug?.trim() || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(input.slug)) {
+    return "Slug must be lowercase letters, numbers, and hyphens (e.g. tees).";
+  }
+  if (!Number.isInteger(input.sort_order)) return "Sort order must be a whole number.";
+  return null;
+}
+
+export async function createCategory(input: CategoryInput): Promise<ActionResult> {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  const invalid = validateCategoryInput(input);
+  if (invalid) return { ok: false, message: invalid };
+
+  const supabase = await createPrivilegedClient();
+
+  if (input.parent_id) {
+    const { data: parent, error: parentError } = await supabase
+      .from("categories")
+      .select("id, parent_id")
+      .eq("id", input.parent_id)
+      .maybeSingle();
+    if (parentError || !parent) {
+      return { ok: false, message: "Parent category not found." };
+    }
+    if (parent.parent_id) {
+      return { ok: false, message: "Subcategories can only nest one level under a top-level category." };
+    }
+  }
+
+  const { data, error } = await supabase
+    .from("categories")
+    .insert({
+      name: input.name.trim(),
+      slug: input.slug.trim(),
+      description: input.description.trim(),
+      parent_id: input.parent_id,
+      sort_order: input.sort_order,
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    if (error.code === "23505") return { ok: false, message: "That category slug is already in use." };
+    if (error.message?.includes("categories") || error.code === "42P01") {
+      return {
+        ok: false,
+        message: "Categories table missing — run migration 008_categories.sql in Supabase.",
+      };
+    }
+    console.error("Category create failed:", error);
+    return { ok: false, message: error.message || "Failed to create category." };
+  }
+
+  revalidateStore();
+  revalidatePath("/admin/categories");
+  return { ok: true, message: "Category created.", id: data.id };
+}
+
+export async function updateCategory(
+  id: string,
+  input: CategoryInput
+): Promise<ActionResult> {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  const invalid = validateCategoryInput(input);
+  if (invalid) return { ok: false, message: invalid };
+
+  if (input.parent_id === id) {
+    return { ok: false, message: "A category cannot be its own parent." };
+  }
+
+  const supabase = await createPrivilegedClient();
+  const { error } = await supabase
+    .from("categories")
+    .update({
+      name: input.name.trim(),
+      slug: input.slug.trim(),
+      description: input.description.trim(),
+      parent_id: input.parent_id,
+      sort_order: input.sort_order,
+    })
+    .eq("id", id);
+
+  if (error) {
+    if (error.code === "23505") return { ok: false, message: "That category slug is already in use." };
+    console.error("Category update failed:", error);
+    return { ok: false, message: error.message || "Failed to update category." };
+  }
+
+  revalidateStore();
+  revalidatePath("/admin/categories");
+  return { ok: true, message: "Category updated.", id };
+}
+
+export async function deleteCategory(id: string): Promise<ActionResult> {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  const supabase = await createPrivilegedClient();
+  const { data: row } = await supabase
+    .from("categories")
+    .select("id, slug, parent_id")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (!row) return { ok: false, message: "Category not found." };
+
+  // Block delete while products still reference this slug.
+  let productQuery = supabase.from("products").select("id", { count: "exact", head: true });
+  productQuery = row.parent_id
+    ? productQuery.eq("subcategory", row.slug)
+    : productQuery.eq("category", row.slug);
+  const { count } = await productQuery;
+  if ((count ?? 0) > 0) {
+    return {
+      ok: false,
+      message: `Cannot delete — ${count} product${count === 1 ? "" : "s"} still use this category.`,
+    };
+  }
+
+  const { error } = await supabase.from("categories").delete().eq("id", id);
+  if (error) {
+    console.error("Category delete failed:", error);
+    return { ok: false, message: error.message || "Failed to delete category." };
+  }
+
+  revalidateStore();
+  revalidatePath("/admin/categories");
+  return { ok: true, message: "Category deleted." };
 }

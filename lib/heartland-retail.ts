@@ -210,8 +210,9 @@ export function extractVariantOptions(item: HeartlandRetailItem): {
 export interface HeartlandInventoryValue {
   item_id: number;
   location_id?: number;
-  qty_available: number;
+  qty_available?: number;
   qty_on_hand?: number;
+  qty?: number;
   qty_committed?: number;
 }
 
@@ -405,7 +406,7 @@ export async function lookupItemGrid(rawId: string): Promise<HeartlandGridLookup
         color: opts.color,
         price: Number(item.price) || 0,
         inventory_count: qtyByItem.get(item.id) ?? 0,
-        active: item.active !== false,
+        active: isHeartlandItemActive(item),
         description: (item.description || "").trim(),
         sort_order: sizeRank(opts.size),
       };
@@ -448,6 +449,19 @@ export async function lookupItemGrid(rawId: string): Promise<HeartlandGridLookup
   };
 }
 
+function isHeartlandItemActive(item: HeartlandRetailItem): boolean {
+  const raw = item as HeartlandRetailItem & { "active?"?: boolean };
+  if (typeof raw.active === "boolean") return raw.active;
+  if (typeof raw["active?"] === "boolean") return raw["active?"];
+  return true;
+}
+
+function inventoryRowQty(row: HeartlandInventoryValue): number {
+  const raw = row.qty_available ?? row.qty_on_hand ?? row.qty ?? 0;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  return Math.max(0, Math.floor(Number.isFinite(n) ? n : 0));
+}
+
 /** Qty available for one item (all locations summed, or filtered to web location). */
 export async function getItemQtyAvailable(itemId: number): Promise<number> {
   const locationId = Number(process.env.HEARTLAND_RETAIL_LOCATION_ID || 0);
@@ -464,11 +478,11 @@ export async function getItemQtyAvailable(itemId: number): Promise<number> {
   if (locationId > 0) {
     const atLocation = rows.filter((r) => r.location_id === locationId);
     if (atLocation.length > 0) {
-      return Math.max(0, Math.floor(atLocation.reduce((s, r) => s + (r.qty_available ?? 0), 0)));
+      return atLocation.reduce((s, r) => s + inventoryRowQty(r), 0);
     }
   }
 
-  return Math.max(0, Math.floor(rows.reduce((s, r) => s + (r.qty_available ?? 0), 0)));
+  return rows.reduce((s, r) => s + inventoryRowQty(r), 0);
 }
 
 /**
@@ -510,7 +524,7 @@ export async function getInventoryByItemIds(
     for (const row of result.results ?? []) {
       if (wanted.has(row.item_id)) {
         const prev = map.get(row.item_id) ?? 0;
-        map.set(row.item_id, prev + Math.max(0, Math.floor(row.qty_available ?? 0)));
+        map.set(row.item_id, prev + inventoryRowQty(row));
       }
     }
     page += 1;

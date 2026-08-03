@@ -27,6 +27,22 @@ export interface ProductVariant {
   updated_at: string;
 }
 
+/** Top-level or child shop category (from `public.categories`). */
+export interface Category {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  parent_id: string | null;
+  sort_order: number;
+  created_at: string;
+}
+
+/** Top-level category with nested subcategories. */
+export interface CategoryNode extends Category {
+  children: Category[];
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -35,6 +51,8 @@ export interface Product {
   images: string[];
   inventory_count: number;
   category: string;
+  /** Optional subcategory slug under `category` (e.g. tees under tops). */
+  subcategory: string | null;
   slug: string;
   sizes: string[];
   colors: string[];

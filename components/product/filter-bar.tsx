@@ -22,7 +22,6 @@ import {
 } from "@/components/ui/sheet";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
-import { CATEGORIES } from "@/lib/constants";
 import { shopHref } from "@/lib/shop";
 import { formatPrice } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -33,6 +32,9 @@ interface FilterBarProps {
   maxCatalogPrice: number;
   resultCount: number;
   activeCategory?: string | null;
+  /** Shop chips: virtual + DB parents (and optional children when parent active). */
+  categories: Array<{ slug: string; label: string }>;
+  subcategories?: Array<{ slug: string; label: string }>;
 }
 
 const SORT_OPTIONS = [
@@ -47,6 +49,8 @@ export function FilterBar({
   maxCatalogPrice,
   resultCount,
   activeCategory = null,
+  categories,
+  subcategories = [],
 }: FilterBarProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -115,7 +119,9 @@ export function FilterBar({
     if (currentQuery) filters.push({ key: "q", label: `Search: “${currentQuery}”` });
     if (currentCategory) {
       const label =
-        CATEGORIES.find((c) => c.slug === currentCategory)?.label ?? currentCategory;
+        categories.find((c) => c.slug === currentCategory)?.label ??
+        subcategories.find((c) => c.slug === currentCategory)?.label ??
+        currentCategory;
       filters.push({ key: "category", label });
     }
     if (currentSize) filters.push({ key: "size", label: `Size ${currentSize}` });
@@ -124,7 +130,7 @@ export function FilterBar({
       filters.push({ key: "max", label: `Under ${formatPrice(currentMax)}` });
     }
     return filters;
-  }, [currentQuery, currentCategory, currentSize, currentColor, currentMax, searchParams]);
+  }, [currentQuery, currentCategory, currentSize, currentColor, currentMax, searchParams, categories, subcategories]);
 
   const clearAll = () => {
     router.replace("/shop", { scroll: false });
@@ -181,7 +187,7 @@ export function FilterBar({
         >
           All
         </button>
-        {CATEGORIES.map((cat) => (
+        {categories.map((cat) => (
           <button
             key={cat.slug}
             type="button"
@@ -201,6 +207,30 @@ export function FilterBar({
           </button>
         ))}
       </div>
+
+      {subcategories.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 pb-1 -mx-1 px-1 overflow-x-auto">
+          {subcategories.map((cat) => (
+            <button
+              key={cat.slug}
+              type="button"
+              onClick={() =>
+                navigate({
+                  category: currentCategory === cat.slug ? null : cat.slug,
+                })
+              }
+              className={cn(
+                "shrink-0 px-3 py-1.5 text-[11px] tracking-[0.14em] uppercase border transition-colors",
+                currentCategory === cat.slug
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-foreground/10 hover:border-foreground/30"
+              )}
+            >
+              {cat.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">

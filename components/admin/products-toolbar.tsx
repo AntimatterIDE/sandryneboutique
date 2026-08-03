@@ -11,11 +11,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { CATEGORIES } from "@/lib/constants";
 
-const DB_CATEGORIES = CATEGORIES.filter((c) => c.dbCategory);
+interface ProductsToolbarProps {
+  categories: Array<{ slug: string; label: string }>;
+}
 
-export function ProductsToolbar() {
+export function ProductsToolbar({ categories }: ProductsToolbarProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [pending, startTransition] = useTransition();
@@ -50,7 +51,7 @@ export function ProductsToolbar() {
         <Input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search name, slug, Item # or internal ID…"
+          placeholder="Search name, slug, or Heartland Item # (imports if missing)…"
           className="rounded-none pl-9"
           aria-label="Search products by name, slug, Heartland Item number, or internal ID"
         />
@@ -62,8 +63,8 @@ export function ProductsToolbar() {
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">All categories</SelectItem>
-          {DB_CATEGORIES.map((c) => (
-            <SelectItem key={c.dbCategory!} value={c.dbCategory!}>
+          {categories.map((c) => (
+            <SelectItem key={c.slug} value={c.slug}>
               {c.label}
             </SelectItem>
           ))}

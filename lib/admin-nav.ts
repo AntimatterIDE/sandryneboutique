@@ -1,6 +1,7 @@
 import {
   Activity,
   FileText,
+  Folders,
   Home,
   LayoutDashboard,
   Mail,
@@ -22,6 +23,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard, match: "exact" },
   { href: "/admin/homepage", label: "Homepage", icon: Home, match: "prefix" },
   { href: "/admin/products", label: "Products", icon: Package, match: "prefix" },
+  { href: "/admin/categories", label: "Categories", icon: Folders, match: "prefix" },
   { href: "/admin/posts", label: "Journal", icon: FileText, match: "prefix" },
   { href: "/admin/orders", label: "Orders", icon: ShoppingBag, match: "prefix" },
   { href: "/admin/customers", label: "Customers", icon: Users, match: "prefix" },

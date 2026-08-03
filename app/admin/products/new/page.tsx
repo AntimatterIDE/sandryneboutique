@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
 import { ProductForm } from "@/components/admin/product-form";
+import { getCategoryTree } from "@/lib/data/categories";
 
 export const metadata: Metadata = {
   title: "New Product",
 };
 
-export default function NewProductPage() {
+export default async function NewProductPage() {
+  const categoryTree = await getCategoryTree();
+
   return (
     <div className="space-y-8">
       <header>
@@ -14,7 +17,7 @@ export default function NewProductPage() {
           Add a new piece to the Sandryne catalog.
         </p>
       </header>
-      <ProductForm />
+      <ProductForm categoryTree={categoryTree} />
     </div>
   );
 }

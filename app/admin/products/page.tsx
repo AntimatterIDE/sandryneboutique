@@ -1,8 +1,13 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { Plus } from "lucide-react";
+import {
+  ensureProductFromHeartland,
+  looksLikeHeartlandItemQuery,
+} from "@/app/admin/actions";
 import { ProductsToolbar } from "@/components/admin/products-toolbar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,6 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { createPrivilegedClient } from "@/lib/supabase/server";
+import { getCategoryTree } from "@/lib/data/categories";
 import {
   getVariantsByProductIds,
   productIdsMatchingVariantSearch,
@@ -111,6 +117,17 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
 
   let products: Product[] = [];
   let total = 0;
+  const categoryTree = await getCategoryTree();
+  const toolbarCategories = categoryTree.flatMap((parent) => [
+    { slug: parent.slug, label: parent.name },
+    ...parent.children.map((child) => ({
+      slug: child.slug,
+      label: `${parent.name} / ${child.name}`,
+    })),
+  ]);
+  const selectedIsSubcategory = categoryTree.some((parent) =>
+    parent.children.some((child) => child.slug === category)
+  );
 
   if (supabaseConfigured()) {
     const supabase = await createPrivilegedClient();
@@ -124,7 +141,11 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
       const searchFilters = productSearchFilters(q, variantProductIds);
       if (searchFilters.length > 0) query = query.or(searchFilters.join(","));
     }
-    if (category !== "all") query = query.eq("category", category);
+    if (category !== "all") {
+      query = selectedIsSubcategory
+        ? query.eq("subcategory", category)
+        : query.eq("category", category);
+    }
     if (stock === "in") query = query.gt("inventory_count", 0);
     if (stock === "low") query = query.lte("inventory_count", 5);
     if (stock === "out") query = query.eq("inventory_count", 0);
@@ -144,6 +165,26 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
         ...product,
         variants: variantsByProduct.get(product.id) ?? [],
       }));
+    }
+  }
+
+  // Heartland Item # search: import/refresh product with live inventory, open editor.
+  let heartlandImportError: string | null = null;
+  if (
+    q &&
+    page === 1 &&
+    category === "all" &&
+    stock === "all" &&
+    image === "all" &&
+    looksLikeHeartlandItemQuery(q)
+  ) {
+    const ensured = await ensureProductFromHeartland(q);
+    if (ensured.ok && ensured.id) {
+      redirect(`/admin/products/${ensured.id}`);
+    }
+    // Only surface import errors when catalog search also found nothing.
+    if (products.length === 0) {
+      heartlandImportError = ensured.message;
     }
   }
 
@@ -170,13 +211,23 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
       </header>
 
       <Suspense>
-        <ProductsToolbar />
+        <ProductsToolbar categories={toolbarCategories} />
       </Suspense>
+
+      {heartlandImportError && (
+        <div className="border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          {heartlandImportError}
+        </div>
+      )}
 
       {products.length === 0 ? (
         <div className="py-16 text-center border border-dashed border-foreground/15">
           <p className="font-serif text-2xl mb-2">No products found</p>
-          <p className="text-sm text-muted-foreground">Try different filters or add a new product.</p>
+          <p className="text-sm text-muted-foreground">
+            {looksLikeHeartlandItemQuery(q)
+              ? "Heartland import failed for that Item #. Check the message above or try New Product → Look up grid."
+              : "Try different filters, or search a Heartland Item # to import it."}
+          </p>
         </div>
       ) : (
         <>

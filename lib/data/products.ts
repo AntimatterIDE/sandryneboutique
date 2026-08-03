@@ -8,6 +8,8 @@ export type ProductSort = "newest" | "price-asc" | "price-desc";
 
 export interface ProductQuery {
   category?: string;
+  /** Match products.subcategory exactly (child category slug). */
+  subcategory?: string;
   /** Category slug from CATEGORIES (tops, new-arrivals, sale, …). Overrides `category` when set. */
   collection?: string;
   onSale?: boolean;
@@ -143,21 +145,35 @@ async function attachVariants(products: Product[]): Promise<Product[]> {
 function resolveCollectionFlags(q: ProductQuery): ProductQuery {
   if (!q.collection) return q;
   const def = getCategory(q.collection);
-  if (!def) return { ...q, collection: undefined };
+  if (!def) {
+    // Dynamic DB category/subcategory slug — applied in getProductsPage via findCategoryBySlug.
+    return q;
+  }
 
   if (def.slug === "new-arrivals") {
-    return { ...q, collection: undefined, category: undefined, isNew: true };
+    return { ...q, collection: undefined, category: undefined, subcategory: undefined, isNew: true };
   }
   if (def.slug === "sale") {
-    return { ...q, collection: undefined, category: undefined, onSale: true };
+    return { ...q, collection: undefined, category: undefined, subcategory: undefined, onSale: true };
   }
   return {
     ...q,
     collection: undefined,
     category: def.dbCategory ?? undefined,
+    subcategory: undefined,
     isNew: undefined,
     onSale: undefined,
   };
+}
+
+function productMatchesCategory(
+  product: Product,
+  category?: string,
+  subcategory?: string
+): boolean {
+  if (subcategory) return product.subcategory === subcategory;
+  if (category) return product.category === category;
+  return true;
 }
 
 function applyLocalQuery(products: Product[], raw: ProductQuery): Product[] {
@@ -166,7 +182,7 @@ function applyLocalQuery(products: Product[], raw: ProductQuery): Product[] {
 
   let result = products.filter((p) => {
     if (shoppableOnly && !isShoppable(p)) return false;
-    if (q.category && p.category !== q.category) return false;
+    if (!productMatchesCategory(p, q.category, q.subcategory)) return false;
     if (q.onSale && !p.on_sale) return false;
     if (q.isNew && !p.is_new) return false;
     if (q.size && !p.sizes.includes(q.size)) return false;
@@ -237,7 +253,31 @@ export async function getProducts(q: ProductQuery = {}): Promise<Product[]> {
 }
 
 export async function getProductsPage(raw: ProductQuery = {}): Promise<ProductPageResult> {
-  const q = resolveCollectionFlags(raw);
+  let q = resolveCollectionFlags(raw);
+
+  // Dynamic category/subcategory from the DB tree (not in hardcoded CATEGORIES).
+  if (q.collection && !getCategory(q.collection)) {
+    const { findCategoryBySlug } = await import("@/lib/data/categories");
+    const found = await findCategoryBySlug(q.collection);
+    if (found?.parent) {
+      q = {
+        ...q,
+        collection: undefined,
+        category: undefined,
+        subcategory: found.category.slug,
+      };
+    } else if (found) {
+      q = {
+        ...q,
+        collection: undefined,
+        category: found.category.slug,
+        subcategory: undefined,
+      };
+    } else {
+      q = { ...q, collection: undefined, category: q.collection };
+    }
+  }
+
   const shoppableOnly = q.shoppableOnly !== false;
   const pageSize = Math.max(1, q.pageSize ?? q.limit ?? 24);
   const page = Math.max(1, q.page ?? 1);
@@ -253,7 +293,8 @@ export async function getProductsPage(raw: ProductQuery = {}): Promise<ProductPa
   if (shoppableOnly) {
     query = query.gt("inventory_count", 0).not("images", "eq", "{}");
   }
-  if (q.category) query = query.eq("category", q.category);
+  if (q.subcategory) query = query.eq("subcategory", q.subcategory);
+  else if (q.category) query = query.eq("category", q.category);
   if (q.onSale) query = query.eq("on_sale", true);
   if (q.isNew) query = query.eq("is_new", true);
   if (q.size) query = query.contains("sizes", [q.size]);

@@ -35,15 +35,7 @@ import {
   type ProductInput,
   type VariantInput,
 } from "@/app/admin/actions";
-import type { Product, ProductVariant } from "@/lib/types";
-
-const CATEGORY_OPTIONS = [
-  { value: "bottoms", label: "Bottoms" },
-  { value: "dresses", label: "Dresses" },
-  { value: "accessories-jewelry", label: "Accessories & Jewelry" },
-  { value: "tops", label: "Tops" },
-  { value: "active-wear", label: "Active Wear" },
-];
+import type { CategoryNode, Product, ProductVariant } from "@/lib/types";
 
 function slugify(value: string): string {
   return value
@@ -84,9 +76,10 @@ function toDraftVariants(variants: ProductVariant[] | undefined): DraftVariant[]
 
 interface ProductFormProps {
   product?: Product;
+  categoryTree: CategoryNode[];
 }
 
-export function ProductForm({ product }: ProductFormProps) {
+export function ProductForm({ product, categoryTree }: ProductFormProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const isEdit = Boolean(product);
@@ -97,6 +90,7 @@ export function ProductForm({ product }: ProductFormProps) {
   const [description, setDescription] = useState(product?.description ?? "");
   const [price, setPrice] = useState(product ? String(product.price) : "");
   const [category, setCategory] = useState(product?.category ?? "");
+  const [subcategory, setSubcategory] = useState(product?.subcategory ?? "");
   const [images, setImages] = useState<string[]>(product?.images ?? []);
   const [isNew, setIsNew] = useState(product?.is_new ?? true);
   const [onSale, setOnSale] = useState(product?.on_sale ?? false);
@@ -111,6 +105,11 @@ export function ProductForm({ product }: ProductFormProps) {
     toDraftVariants(product?.variants)
   );
   const [lookupPending, setLookupPending] = useState(false);
+
+  const subcategoryOptions = useMemo(() => {
+    const parent = categoryTree.find((c) => c.slug === category);
+    return parent?.children ?? [];
+  }, [categoryTree, category]);
 
   const totalInventory = useMemo(() => {
     if (variants.length === 0) return product?.inventory_count ?? 0;
@@ -159,6 +158,7 @@ export function ProductForm({ product }: ProductFormProps) {
       images,
       inventory_count: totalInventory,
       category,
+      subcategory: subcategory.trim() || null,
       slug: slug.trim(),
       sizes,
       colors,
@@ -352,18 +352,55 @@ export function ProductForm({ product }: ProductFormProps) {
 
         <div className="space-y-1.5">
           <Label>Category</Label>
-          <Select value={category} onValueChange={setCategory} required>
+          <Select
+            value={category}
+            onValueChange={(value) => {
+              setCategory(value);
+              setSubcategory("");
+            }}
+            required
+          >
             <SelectTrigger className="rounded-none w-full">
               <SelectValue placeholder="Choose a category" />
             </SelectTrigger>
             <SelectContent>
-              {CATEGORY_OPTIONS.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
+              {categoryTree.map((opt) => (
+                <SelectItem key={opt.slug} value={opt.slug}>
+                  {opt.name}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Subcategory</Label>
+          <Select
+            value={subcategory || "__none__"}
+            onValueChange={(value) => setSubcategory(value === "__none__" ? "" : value)}
+            disabled={subcategoryOptions.length === 0}
+          >
+            <SelectTrigger className="rounded-none w-full">
+              <SelectValue
+                placeholder={
+                  subcategoryOptions.length === 0
+                    ? "No subcategories yet"
+                    : "Optional subcategory"
+                }
+              />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">None</SelectItem>
+              {subcategoryOptions.map((opt) => (
+                <SelectItem key={opt.slug} value={opt.slug}>
+                  {opt.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-[11px] text-muted-foreground">
+            Manage categories in Admin → Categories (e.g. Tops → Tees).
+          </p>
         </div>
 
         <div className="sm:col-span-2 space-y-1.5">

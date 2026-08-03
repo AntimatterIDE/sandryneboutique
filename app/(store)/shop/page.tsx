@@ -7,6 +7,7 @@ import { CatalogPagination } from "@/components/ui/catalog-pagination";
 import { JsonLd } from "@/components/seo/json-ld";
 import { breadcrumbJsonLd, collectionPageJsonLd } from "@/lib/seo/jsonld";
 import { SITE_NAME, getCategory } from "@/lib/constants";
+import { getCategoryTree, findCategoryBySlug } from "@/lib/data/categories";
 import { getProducts, getProductsPage, type ProductSort } from "@/lib/data/products";
 import { SHOP_PAGE_SIZE, shopHref } from "@/lib/shop";
 import { effectivePrice } from "@/lib/types";
@@ -48,7 +49,11 @@ export async function generateMetadata({ searchParams }: PageProps): Promise<Met
 export default async function ShopPage({ searchParams }: PageProps) {
   const sp = await searchParams;
   const collection = first(sp.category);
-  const def = collection ? getCategory(collection) : null;
+  const hardcoded = collection ? getCategory(collection) : null;
+  const dynamic = !hardcoded && collection ? await findCategoryBySlug(collection) : null;
+  const tree = await getCategoryTree();
+  const collectionSlug =
+    hardcoded?.slug ?? dynamic?.category.slug ?? collection ?? undefined;
 
   const search = first(sp.q)?.trim();
   const sort = (first(sp.sort) as ProductSort | undefined) ?? "newest";
@@ -58,7 +63,7 @@ export default async function ShopPage({ searchParams }: PageProps) {
   const page = Math.max(1, Number(first(sp.page) ?? "1") || 1);
 
   const baseQuery = {
-    collection: def?.slug,
+    collection: collectionSlug,
     search,
     shoppableOnly: true as const,
   };
@@ -82,21 +87,36 @@ export default async function ShopPage({ searchParams }: PageProps) {
     Math.max(0, ...allForFacets.map((p) => effectivePrice(p)), 100)
   );
 
-  const title = def?.label ?? "Shop";
+  const title =
+    hardcoded?.label ?? dynamic?.category.name ?? "Shop";
   const description =
-    def?.description ??
+    hardcoded?.description ??
+    dynamic?.category.description ??
     "Curated pieces for every hour of the day — filter by category, size, and color.";
+
+  const filterCategories = [
+    { slug: "new-arrivals", label: "New Arrivals" },
+    ...tree.map((c) => ({ slug: c.slug, label: c.name })),
+    { slug: "sale", label: "Sale" },
+  ];
+  const activeParent =
+    tree.find((p) => p.slug === collectionSlug) ??
+    tree.find((p) => p.children.some((c) => c.slug === collectionSlug));
+  const subcategories =
+    activeParent?.children.map((c) => ({ slug: c.slug, label: c.name })) ?? [];
 
   const hrefForPage = (p: number) =>
     shopHref({
       q: search,
-      category: def?.slug,
+      category: collectionSlug,
       size,
       color,
       sort,
       max,
       page: p,
     });
+
+  const def = hardcoded;
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-12 sm:py-16">
@@ -107,13 +127,13 @@ export default async function ShopPage({ searchParams }: PageProps) {
             : {
                 "@context": "https://schema.org",
                 "@type": "CollectionPage",
-                name: "Shop",
-                url: `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/shop`,
+                name: title,
+                url: `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}${shopHref({ category: collectionSlug })}`,
               },
           breadcrumbJsonLd([
             { name: "Home", path: "/" },
             { name: "Shop", path: "/shop" },
-            ...(def ? [{ name: def.label }] : []),
+            ...(collectionSlug ? [{ name: title }] : []),
           ]),
         ]}
       />
@@ -139,7 +159,9 @@ export default async function ShopPage({ searchParams }: PageProps) {
             availableColors={availableColors}
             maxCatalogPrice={maxCatalogPrice}
             resultCount={pageResult.total}
-            activeCategory={def?.slug ?? null}
+            activeCategory={collectionSlug ?? null}
+            categories={filterCategories}
+            subcategories={subcategories}
           />
         </Suspense>
       </div>
@@ -158,11 +180,13 @@ export default async function ShopPage({ searchParams }: PageProps) {
               <ProductCard key={product.id} product={product} priority={i < 4} />
             ))}
           </div>
-          <CatalogPagination
-            page={pageResult.page}
-            totalPages={pageResult.totalPages}
-            hrefForPage={hrefForPage}
-          />
+          <div className="mt-12">
+            <CatalogPagination
+              page={pageResult.page}
+              totalPages={pageResult.totalPages}
+              hrefForPage={hrefForPage}
+            />
+          </div>
         </>
       )}
     </div>

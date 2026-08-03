@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { ProductForm } from "@/components/admin/product-form";
+import { getCategoryTree } from "@/lib/data/categories";
 import { getVariantsByProductIds } from "@/lib/data/products";
 import { createPrivilegedClient } from "@/lib/supabase/server";
 import type { Product } from "@/lib/types";
@@ -17,7 +18,10 @@ export default async function EditProductPage({
   const { id } = await params;
 
   const supabase = await createPrivilegedClient();
-  const { data } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
+  const [{ data }, categoryTree] = await Promise.all([
+    supabase.from("products").select("*").eq("id", id).maybeSingle(),
+    getCategoryTree(),
+  ]);
   const product = data as Product | null;
   if (!product) notFound();
 
@@ -29,7 +33,14 @@ export default async function EditProductPage({
         <h1 className="font-serif text-3xl tracking-tight">Edit Product</h1>
         <p className="text-sm text-muted-foreground mt-1">{product.name}</p>
       </header>
-      <ProductForm product={{ ...product, variants: variants.get(product.id) ?? [] }} />
+      <ProductForm
+        product={{
+          ...product,
+          subcategory: product.subcategory ?? null,
+          variants: variants.get(product.id) ?? [],
+        }}
+        categoryTree={categoryTree}
+      />
     </div>
   );
 }
