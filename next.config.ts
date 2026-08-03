@@ -5,10 +5,6 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["globalpayments-api"],
   experimental: {
     optimizePackageImports: ["lucide-react", "motion/react", "gsap"],
-    // Admin product photos are uploaded via Server Actions (default limit is 1MB).
-    serverActions: {
-      bodySizeLimit: "12mb",
-    },
   },
   images: {
     remotePatterns: [

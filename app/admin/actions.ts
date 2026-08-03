@@ -15,6 +15,8 @@ export interface ActionResult {
 export type ProductImageUploadResult =
   | {
       ok: true;
+      path: string;
+      token: string;
       publicUrl: string;
     }
   | {
@@ -103,11 +105,13 @@ function extensionForImageUpload(contentType: string, fileName?: string): string
 }
 
 /**
- * Upload a product image server-side with the service-role client.
- * Avoids browser Storage RLS failures under AUTH_BYPASS demo mode.
+ * Authorize a direct browser → Supabase Storage upload.
+ * High-res photos must not go through Vercel Server Actions (413 body limit).
  */
-export async function uploadProductImage(
-  formData: FormData
+export async function createProductImageUpload(
+  contentType: string,
+  size: number,
+  fileName?: string
 ): Promise<ProductImageUploadResult> {
   const denied = await requireAdmin();
   if (denied) return { ok: false, message: denied.message };
@@ -119,14 +123,8 @@ export async function uploadProductImage(
     };
   }
 
-  const file = formData.get("file");
-  if (!(file instanceof Blob)) {
-    return { ok: false, message: "Choose an image file to upload." };
-  }
-
-  const fileName = file instanceof File ? file.name : "upload";
-  const contentType = (file.type || "").trim().toLowerCase();
-  if (contentType === "image/heic" || contentType === "image/heif") {
+  const normalizedType = contentType.trim().toLowerCase();
+  if (normalizedType === "image/heic" || normalizedType === "image/heif") {
     return {
       ok: false,
       message: "iPhone HEIC photos aren’t supported — export as JPG or PNG first.",
@@ -137,29 +135,21 @@ export async function uploadProductImage(
   if (!extension) {
     return { ok: false, message: "Choose a JPG, PNG, WebP, AVIF, or GIF image." };
   }
-  if (!Number.isFinite(file.size) || file.size <= 0 || file.size > 10 * 1024 * 1024) {
+  if (!Number.isFinite(size) || size <= 0 || size > 10 * 1024 * 1024) {
     return { ok: false, message: "Images must be smaller than 10MB." };
   }
 
   const path = `${crypto.randomUUID()}.${extension}`;
-  const bytes = Buffer.from(await file.arrayBuffer());
   const supabase = createAdminClient();
-  const resolvedType =
-    contentType && contentType !== "application/octet-stream"
-      ? contentType
-      : `image/${extension === "jpg" ? "jpeg" : extension}`;
+  const { data, error } = await supabase.storage
+    .from("product-images")
+    .createSignedUploadUrl(path);
 
-  const { error } = await supabase.storage.from("product-images").upload(path, bytes, {
-    cacheControl: "31536000",
-    contentType: resolvedType,
-    upsert: false,
-  });
-
-  if (error) {
-    console.error("Product image upload failed:", error);
+  if (error || !data?.token) {
+    console.error("Product image upload authorization failed:", error);
     return {
       ok: false,
-      message: error.message || "Could not upload that image. Please try again.",
+      message: error?.message || "Could not authorize the image upload. Please try again.",
     };
   }
 
@@ -167,7 +157,7 @@ export async function uploadProductImage(
     data: { publicUrl },
   } = supabase.storage.from("product-images").getPublicUrl(path);
 
-  return { ok: true, publicUrl };
+  return { ok: true, path, token: data.token, publicUrl };
 }
 
 function validateProduct(

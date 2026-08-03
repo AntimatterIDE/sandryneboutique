@@ -6,7 +6,8 @@ import { ArrowLeft, ArrowRight, Loader2, Plus, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { uploadProductImage } from "@/app/admin/actions";
+import { createProductImageUpload } from "@/app/admin/actions";
+import { createClient } from "@/lib/supabase/client";
 
 interface ImageManagerProps {
   images: string[];
@@ -23,10 +24,17 @@ export function ImageManager({ images, onChange }: ImageManagerProps) {
   const [uploading, setUploading] = useState(false);
   const [urlDraft, setUrlDraft] = useState("");
 
+  const supabaseReady = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL);
+
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
+    if (!supabaseReady) {
+      toast.error("Supabase Storage is not configured — paste an image URL instead.");
+      return;
+    }
 
     setUploading(true);
+    const supabase = createClient();
     const uploaded: string[] = [];
 
     try {
@@ -44,15 +52,33 @@ export function ImageManager({ images, onChange }: ImageManagerProps) {
           continue;
         }
 
-        const formData = new FormData();
-        formData.set("file", file);
-        const result = await uploadProductImage(formData);
-        if (!result.ok) {
-          toast.error(`Upload failed for ${file.name}: ${result.message}`);
+        // Tiny authorize request only — file bytes go straight to Supabase (avoids Vercel 413).
+        const ticket = await createProductImageUpload(file.type, file.size, file.name);
+        if (!ticket.ok) {
+          toast.error(`Upload failed for ${file.name}: ${ticket.message}`);
           continue;
         }
 
-        uploaded.push(result.publicUrl);
+        const ext = ticket.path.split(".").pop() ?? "jpeg";
+        const contentType =
+          file.type && file.type !== "application/octet-stream"
+            ? file.type
+            : `image/${ext === "jpg" ? "jpeg" : ext}`;
+
+        const { error } = await supabase.storage
+          .from("product-images")
+          .uploadToSignedUrl(ticket.path, ticket.token, file, {
+            cacheControl: "31536000",
+            contentType,
+          });
+
+        if (error) {
+          console.error("Image upload failed:", error);
+          toast.error(`Upload failed for ${file.name}: ${error.message}`);
+          continue;
+        }
+
+        uploaded.push(ticket.publicUrl);
       }
 
       if (uploaded.length > 0) {
@@ -61,7 +87,11 @@ export function ImageManager({ images, onChange }: ImageManagerProps) {
       }
     } catch (error) {
       console.error("Image upload failed:", error);
-      toast.error("The image upload failed unexpectedly. Please try again.");
+      const message =
+        error instanceof Error && /413|too large|unexpected response/i.test(error.message)
+          ? "That photo is too large for the upload path — try a smaller JPG/PNG under 10MB."
+          : "The image upload failed unexpectedly. Please try again.";
+      toast.error(message);
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -178,8 +208,7 @@ export function ImageManager({ images, onChange }: ImageManagerProps) {
         </div>
       </div>
       <p className="text-xs text-muted-foreground">
-        JPG/PNG/WebP up to 10MB (not iPhone HEIC). Most styles are already in Products — open one
-        and upload photos there.
+        JPG/PNG/WebP up to 10MB (not iPhone HEIC). Files upload directly to storage.
       </p>
     </div>
   );
