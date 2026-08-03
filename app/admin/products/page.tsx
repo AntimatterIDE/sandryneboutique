@@ -4,10 +4,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { Plus } from "lucide-react";
-import {
-  ensureProductFromHeartland,
-  looksLikeHeartlandItemQuery,
-} from "@/app/admin/actions";
+import { ensureProductFromHeartland } from "@/app/admin/actions";
 import { ProductsToolbar } from "@/components/admin/products-toolbar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,6 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { looksLikeHeartlandItemQuery } from "@/lib/heartland-retail";
 import { createPrivilegedClient } from "@/lib/supabase/server";
 import { getCategoryTree } from "@/lib/data/categories";
 import {

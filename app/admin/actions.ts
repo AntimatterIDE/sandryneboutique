@@ -911,15 +911,6 @@ function slugifyProductName(value: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-/** True when the admin search box likely contains a Heartland Item # / id. */
-export function looksLikeHeartlandItemQuery(raw: string): boolean {
-  const trimmed = raw.trim();
-  if (!trimmed) return false;
-  if (/^\d{3,}$/.test(trimmed)) return true;
-  // Public ids / barcodes that include digits (e.g. mixed codes).
-  return /^[A-Za-z0-9._-]{3,40}$/.test(trimmed) && /\d/.test(trimmed);
-}
-
 async function allocateUniqueProductSlug(
   supabase: Awaited<ReturnType<typeof createPrivilegedClient>>,
   base: string
@@ -948,11 +939,13 @@ export async function ensureProductFromHeartland(
   if (denied) return denied;
 
   const trimmed = rawId.trim();
+  const { lookupItemGrid, looksLikeHeartlandItemQuery } = await import(
+    "@/lib/heartland-retail"
+  );
+
   if (!looksLikeHeartlandItemQuery(trimmed)) {
     return { ok: false, message: "Enter a Heartland Item # to import." };
   }
-
-  const { lookupItemGrid } = await import("@/lib/heartland-retail");
 
   let grid;
   try {
