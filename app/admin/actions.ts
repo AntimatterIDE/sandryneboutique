@@ -421,11 +421,24 @@ export async function createProduct(
     };
   }
 
-  const { data, error } = await supabase
+  const insertPayload = {
+    ...productRowFromInput(input),
+    is_new_at: input.is_new ? new Date().toISOString() : null,
+  };
+
+  let { data, error } = await supabase
     .from("products")
-    .insert(productRowFromInput(input))
+    .insert(insertPayload)
     .select("id")
     .single();
+
+  if (error && /is_new_at/i.test(error.message ?? "")) {
+    ({ data, error } = await supabase
+      .from("products")
+      .insert(productRowFromInput(input))
+      .select("id")
+      .single());
+  }
 
   if (error) {
     if (error.code === "23505") {
@@ -466,6 +479,12 @@ export async function updateProduct(
   if (invalid) return { ok: false, message: invalid };
 
   const supabase = await createPrivilegedClient();
+  const { data: existingRow } = await supabase
+    .from("products")
+    .select("is_new, is_new_at")
+    .eq("id", id)
+    .maybeSingle();
+
   const row = productRowFromInput(input);
   // Don't wipe Heartland ids when saving a legacy product with an empty variant list.
   const {
@@ -473,9 +492,22 @@ export async function updateProduct(
     heartland_public_id: _heartlandPublicId,
     ...rowWithoutHeartland
   } = row;
-  const updatePayload = input.variants.length > 0 ? row : rowWithoutHeartland;
+  const basePayload = input.variants.length > 0 ? row : rowWithoutHeartland;
 
-  const { error } = await supabase.from("products").update(updatePayload).eq("id", id);
+  // Bump is_new_at only when newly marked as a New Arrival so it rises to the top.
+  const is_new_at = input.is_new
+    ? existingRow?.is_new && existingRow.is_new_at
+      ? existingRow.is_new_at
+      : new Date().toISOString()
+    : null;
+
+  const updatePayload = { ...basePayload, is_new_at };
+
+  let { error } = await supabase.from("products").update(updatePayload).eq("id", id);
+
+  if (error && /is_new_at/i.test(error.message ?? "")) {
+    ({ error } = await supabase.from("products").update(basePayload).eq("id", id));
+  }
 
   if (error) {
     if (error.code === "23505") {

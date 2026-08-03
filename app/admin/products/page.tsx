@@ -273,7 +273,7 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
                   </div>
                   <div className="min-w-0 flex-1 space-y-1.5">
                     <p className="font-medium leading-snug">{product.name}</p>
-                    <p className="text-xs text-muted-foreground font-mono">
+                    <p className="text-sm text-muted-foreground font-mono">
                       Item # {itemNumberLabel(product)}
                       {variantCountLabel(product) ? (
                         <span className="ml-1.5 normal-case tracking-normal">
@@ -345,7 +345,7 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
                       <p className="text-xs text-muted-foreground font-mono">{product.slug}</p>
                     </TableCell>
                     <TableCell
-                      className="text-xs text-muted-foreground font-mono"
+                      className="text-sm text-muted-foreground font-mono"
                       title={(product.variants ?? [])
                         .map((variant) => variant.heartland_public_id)
                         .join(", ")}

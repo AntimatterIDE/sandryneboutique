@@ -57,6 +57,8 @@ export interface Product {
   sizes: string[];
   colors: string[];
   is_new: boolean;
+  /** When the product was last marked as a new arrival; null if not new. */
+  is_new_at?: string | null;
   on_sale: boolean;
   sale_price: number | null;
   /** Primary Heartland Retail internal item id (first active variant). */

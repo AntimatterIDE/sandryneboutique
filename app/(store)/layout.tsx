@@ -3,7 +3,6 @@ import { Header } from "@/components/layout/header";
 import { PromoBar } from "@/components/layout/promo-bar";
 import { Footer } from "@/components/layout/footer";
 import { CartDrawerLazy } from "@/components/cart/cart-drawer-lazy";
-import { FlareEffects } from "@/components/flare/flare-effects";
 import { getMegaMenuProducts } from "@/lib/data/products";
 
 export default async function StoreLayout({
@@ -20,7 +19,6 @@ export default async function StoreLayout({
       <main className="flex-1">{children}</main>
       <Footer />
       <CartDrawerLazy />
-      <FlareEffects />
     </>
   );
 }

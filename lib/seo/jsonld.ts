@@ -1,4 +1,4 @@
-import { SITE_NAME, SOCIAL_LINKS, type CategoryDef } from "@/lib/constants";
+import { SITE_EMAIL, SITE_NAME, SOCIAL_LINKS, STORE_CONTACT, type CategoryDef } from "@/lib/constants";
 import { shopHref } from "@/lib/shop";
 import { effectivePrice, type Post, type Product } from "@/lib/types";
 
@@ -19,9 +19,20 @@ export function organizationJsonLd() {
     url: siteUrl,
     logo: `${siteUrl}/icon-512.png`,
     sameAs: [SOCIAL_LINKS.instagram, SOCIAL_LINKS.tiktok],
+    email: SITE_EMAIL,
+    telephone: STORE_CONTACT.phoneDisplay,
+    address: {
+      "@type": "PostalAddress",
+      streetAddress: "415 Peachtree Parkway, Ste 235",
+      addressLocality: "Cumming",
+      addressRegion: "GA",
+      postalCode: "30041",
+      addressCountry: "US",
+    },
     contactPoint: {
       "@type": "ContactPoint",
-      email: "hello@sandryneboutique.com",
+      email: SITE_EMAIL,
+      telephone: STORE_CONTACT.phoneDisplay,
       contactType: "customer service",
     },
   };

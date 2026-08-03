@@ -4,6 +4,19 @@ export const FLAT_SHIPPING_RATE = 9.95;
 
 export const SITE_NAME = "Sandryne Boutique";
 
+export const SITE_EMAIL = "info@sandryneboutique.com";
+
+export const STORE_CONTACT = {
+  email: SITE_EMAIL,
+  phoneDisplay: "+1 470-820-2859",
+  phoneHref: "tel:+14708202859",
+  addressLines: ["415 Peachtree Parkway, Ste 235", "Cumming, GA 30041"],
+  hours: "Mon – Sat 10 – 6 PM",
+  mapsUrl: "https://maps.app.goo.gl/FRrYMN4AdVxPCWnBA",
+  mapsEmbedUrl:
+    "https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3546.80945431093!2d-84.17495192415137!3d34.152554312426766!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x88f59bd1f801bf29%3A0x38d394311f187367!2ssandryne%20boutique!5e1!3m2!1sen!2sus!4v1777760369913!5m2!1sen!2sus",
+} as const;
+
 export const SOCIAL_LINKS = {
   instagram: "https://www.instagram.com/sandryneboutique",
   tiktok: "https://www.tiktok.com/@sandryneboutique",

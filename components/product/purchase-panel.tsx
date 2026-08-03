@@ -160,8 +160,8 @@ export function PurchasePanel({ product }: PurchasePanelProps) {
   return (
     <div className="flex flex-col gap-7">
       {itemNumber && (
-        <p className="text-[11px] tracking-[0.16em] uppercase text-muted-foreground -mb-3">
-          Item # <span className="font-mono tracking-normal">{itemNumber}</span>
+        <p className="text-sm sm:text-base tracking-[0.08em] uppercase text-muted-foreground -mb-2">
+          Item # <span className="font-mono tracking-normal normal-case">{itemNumber}</span>
         </p>
       )}
 

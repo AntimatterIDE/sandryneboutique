@@ -220,9 +220,18 @@ function applyLocalQuery(products: Product[], raw: ProductQuery): Product[] {
       result = result.toSorted((a, b) => effectivePrice(b) - effectivePrice(a));
       break;
     default:
-      result = result.toSorted(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      );
+      if (q.isNew) {
+        result = result.toSorted((a, b) => {
+          const aNew = a.is_new_at ? new Date(a.is_new_at).getTime() : 0;
+          const bNew = b.is_new_at ? new Date(b.is_new_at).getTime() : 0;
+          if (bNew !== aNew) return bNew - aNew;
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        });
+      } else {
+        result = result.toSorted(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
+      }
   }
 
   return q.limit ? result.slice(0, q.limit) : result;
@@ -313,13 +322,61 @@ export async function getProductsPage(raw: ProductQuery = {}): Promise<ProductPa
       query = query.order("price", { ascending: false });
       break;
     default:
-      query = query.order("created_at", { ascending: false });
+      if (q.isNew) {
+        // Most recently marked New Arrival first, then newest products.
+        // Requires migration 009_is_new_at.sql — falls back below if column missing.
+        query = query
+          .order("is_new_at", { ascending: false, nullsFirst: false })
+          .order("created_at", { ascending: false });
+      } else {
+        query = query.order("created_at", { ascending: false });
+      }
   }
 
   const needsPriceFilter = q.minPrice != null || q.maxPrice != null;
 
+  async function runQuery(activeQuery: typeof query) {
+    if (needsPriceFilter) {
+      const { data, error } = await activeQuery;
+      return { data, error, count: data?.length ?? 0 };
+    }
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+    const { data, error, count } = await activeQuery.range(from, to);
+    return { data, error, count };
+  }
+
+  let { data, error, count } = await runQuery(query);
+
+  // If migration 009 isn't applied yet, PostgREST errors on is_new_at — retry without it.
+  if (
+    error &&
+    q.isNew &&
+    q.sort !== "price-asc" &&
+    q.sort !== "price-desc" &&
+    /is_new_at/i.test(error.message ?? "")
+  ) {
+    console.warn("is_new_at missing — falling back to created_at sort. Run migration 009_is_new_at.sql.");
+    let fallback = supabase.from("products").select("*", { count: "exact" });
+    if (shoppableOnly) {
+      fallback = fallback.gt("inventory_count", 0).not("images", "eq", "{}");
+    }
+    if (q.subcategory) fallback = fallback.eq("subcategory", q.subcategory);
+    else if (q.category) fallback = fallback.eq("category", q.category);
+    if (q.onSale) fallback = fallback.eq("on_sale", true);
+    if (q.isNew) fallback = fallback.eq("is_new", true);
+    if (q.size) fallback = fallback.contains("sizes", [q.size]);
+    if (q.color) fallback = fallback.contains("colors", [q.color]);
+    if (q.search?.trim()) {
+      const variantProductIds = await productIdsMatchingVariantSearch(q.search);
+      const searchFilters = productSearchFilters(q.search, variantProductIds);
+      if (searchFilters.length > 0) fallback = fallback.or(searchFilters.join(","));
+    }
+    fallback = fallback.order("created_at", { ascending: false });
+    ({ data, error, count } = await runQuery(fallback));
+  }
+
   if (needsPriceFilter) {
-    const { data, error } = await query;
     if (error) {
       console.error("Failed to fetch products:", error);
       return { products: [], total: 0, page: 1, pageSize, totalPages: 1 };
@@ -332,16 +389,20 @@ export async function getProductsPage(raw: ProductQuery = {}): Promise<ProductPa
       if (q.maxPrice != null && price > q.maxPrice) return false;
       return true;
     });
+    if (q.isNew) {
+      products = products.toSorted((a, b) => {
+        const aNew = a.is_new_at ? new Date(a.is_new_at).getTime() : 0;
+        const bNew = b.is_new_at ? new Date(b.is_new_at).getTime() : 0;
+        if (bNew !== aNew) return bNew - aNew;
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+    }
     const pageResult = paginateLocal(products, page, pageSize);
     if (q.includeVariants) {
       pageResult.products = await attachVariants(pageResult.products);
     }
     return pageResult;
   }
-
-  const from = (page - 1) * pageSize;
-  const to = from + pageSize - 1;
-  const { data, error, count } = await query.range(from, to);
 
   if (error) {
     console.error("Failed to fetch products:", error);
