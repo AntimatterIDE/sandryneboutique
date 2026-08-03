@@ -440,8 +440,8 @@ export async function createProduct(
       .single());
   }
 
-  if (error) {
-    if (error.code === "23505") {
+  if (error || !data) {
+    if (error?.code === "23505") {
       if (error.message?.includes("heartland_item_id")) {
         return {
           ok: false,
@@ -452,7 +452,7 @@ export async function createProduct(
       return { ok: false, message: "That slug is already in use." };
     }
     console.error("Product create failed:", error);
-    return { ok: false, message: error.message || "Failed to create product. Please try again." };
+    return { ok: false, message: error?.message || "Failed to create product. Please try again." };
   }
 
   const variantError = await syncProductVariants(supabase, data.id, input.variants);
