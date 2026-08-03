@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -37,6 +37,7 @@ interface CategoryManagerProps {
 export function CategoryManager({ tree }: CategoryManagerProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
@@ -46,6 +47,7 @@ export function CategoryManager({ tree }: CategoryManagerProps) {
   const [sortOrder, setSortOrder] = useState("0");
 
   const parents = useMemo(() => tree, [tree]);
+  const usingFallback = tree.some((node) => node.id.startsWith("fallback-"));
 
   const resetForm = () => {
     setName("");
@@ -56,8 +58,27 @@ export function CategoryManager({ tree }: CategoryManagerProps) {
     setSortOrder("0");
   };
 
+  const startAddSubcategory = (parent: CategoryNode) => {
+    if (parent.id.startsWith("fallback-")) {
+      toast.error("Run migration 008_categories.sql in Supabase before managing categories.");
+      return;
+    }
+    setParentId(parent.id);
+    setName("");
+    setSlug("");
+    setSlugTouched(false);
+    setDescription("");
+    setSortOrder(String((parent.children.length + 1) * 10));
+    nameInputRef.current?.focus();
+    nameInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
+    if (usingFallback) {
+      toast.error("Run migration 008_categories.sql in Supabase before creating categories.");
+      return;
+    }
     const input: CategoryInput = {
       name: name.trim(),
       slug: slug.trim(),
@@ -77,9 +98,16 @@ export function CategoryManager({ tree }: CategoryManagerProps) {
     });
   };
 
-  const handleRename = (node: CategoryNode | CategoryNode["children"][number], nextName: string) => {
+  const handleRename = (
+    node: CategoryNode | CategoryNode["children"][number],
+    nextName: string
+  ) => {
     const trimmed = nextName.trim();
     if (!trimmed || trimmed === node.name) return;
+    if (node.id.startsWith("fallback-")) {
+      toast.error("Run migration 008_categories.sql in Supabase before editing categories.");
+      return;
+    }
     startTransition(async () => {
       const result = await updateCategory(node.id, {
         name: trimmed,
@@ -98,6 +126,10 @@ export function CategoryManager({ tree }: CategoryManagerProps) {
   };
 
   const handleDelete = (id: string, label: string) => {
+    if (id.startsWith("fallback-")) {
+      toast.error("Run migration 008_categories.sql in Supabase before managing categories.");
+      return;
+    }
     if (!window.confirm(`Delete “${label}”? This cannot be undone.`)) return;
     startTransition(async () => {
       const result = await deleteCategory(id);
@@ -114,15 +146,26 @@ export function CategoryManager({ tree }: CategoryManagerProps) {
     <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
       <form onSubmit={handleCreate} className="space-y-4 border border-foreground/10 p-4 sm:p-5">
         <div>
-          <p className="text-xs tracking-[0.18em] uppercase text-muted-foreground">Add category</p>
+          <p className="text-xs tracking-[0.18em] uppercase text-muted-foreground">
+            Add category or subcategory
+          </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Create a top-level category, or a subcategory under one (e.g. Tops → Tees).
+            Top-level examples: Tops, Bottoms. Subcategories nest under one parent (Tops → Tees).
           </p>
         </div>
+
+        {usingFallback ? (
+          <div className="border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
+            Categories table isn&apos;t connected yet. Run{" "}
+            <code className="font-mono text-xs">008_categories.sql</code> in the Supabase SQL
+            editor, then refresh this page.
+          </div>
+        ) : null}
 
         <div className="space-y-1.5">
           <Label htmlFor="cat-name">Name</Label>
           <Input
+            ref={nameInputRef}
             id="cat-name"
             value={name}
             onChange={(e) => {
@@ -159,7 +202,7 @@ export function CategoryManager({ tree }: CategoryManagerProps) {
             <SelectContent>
               <SelectItem value="none">None — top-level category</SelectItem>
               {parents.map((parent) => (
-                <SelectItem key={parent.id} value={parent.id}>
+                <SelectItem key={parent.id} value={parent.id} disabled={usingFallback}>
                   Under {parent.name}
                 </SelectItem>
               ))}
@@ -192,11 +235,11 @@ export function CategoryManager({ tree }: CategoryManagerProps) {
 
         <Button
           type="submit"
-          disabled={pending}
+          disabled={pending || usingFallback}
           className="rounded-none tracking-[0.16em] uppercase text-xs h-10 px-6 gap-2"
         >
           {pending ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-          Create
+          {parentId === "none" ? "Create category" : "Create subcategory"}
         </Button>
       </form>
 
@@ -204,7 +247,8 @@ export function CategoryManager({ tree }: CategoryManagerProps) {
         <div>
           <p className="text-xs tracking-[0.18em] uppercase text-muted-foreground">Current tree</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Click a name to rename. Delete is blocked while products still use a category.
+            Rename inline, or use Add subcategory under a parent. Delete is blocked while products
+            still use a category.
           </p>
         </div>
 
@@ -229,17 +273,28 @@ export function CategoryManager({ tree }: CategoryManagerProps) {
                     }}
                   />
                   <span className="font-mono text-[11px] text-muted-foreground">{parent.slug}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={pending || usingFallback}
+                    onClick={() => startAddSubcategory(parent)}
+                    className="rounded-none h-8 px-2 text-[11px] tracking-[0.12em] uppercase gap-1"
+                  >
+                    <Plus className="size-3.5" />
+                    Sub
+                  </Button>
                   <button
                     type="button"
                     aria-label={`Delete ${parent.name}`}
-                    disabled={pending}
+                    disabled={pending || usingFallback}
                     onClick={() => handleDelete(parent.id, parent.name)}
                     className="p-1.5 text-muted-foreground hover:text-destructive"
                   >
                     <Trash2 className="size-3.5" />
                   </button>
                 </div>
-                {parent.children.length > 0 && (
+                {parent.children.length > 0 ? (
                   <ul className="divide-y divide-foreground/8">
                     {parent.children.map((child) => (
                       <li key={child.id} className="flex items-center gap-2 px-3 py-2 pl-8">
@@ -254,11 +309,13 @@ export function CategoryManager({ tree }: CategoryManagerProps) {
                             }
                           }}
                         />
-                        <span className="font-mono text-[11px] text-muted-foreground">{child.slug}</span>
+                        <span className="font-mono text-[11px] text-muted-foreground">
+                          {child.slug}
+                        </span>
                         <button
                           type="button"
                           aria-label={`Delete ${child.name}`}
-                          disabled={pending}
+                          disabled={pending || usingFallback}
                           onClick={() => handleDelete(child.id, child.name)}
                           className="p-1.5 text-muted-foreground hover:text-destructive"
                         >
@@ -267,6 +324,15 @@ export function CategoryManager({ tree }: CategoryManagerProps) {
                       </li>
                     ))}
                   </ul>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={pending || usingFallback}
+                    onClick={() => startAddSubcategory(parent)}
+                    className="w-full px-3 py-2 pl-8 text-left text-xs text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                  >
+                    + Add subcategory under {parent.name}
+                  </button>
                 )}
               </li>
             ))}

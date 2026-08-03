@@ -1,8 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
-import { Loader2, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import { ImageManager } from "@/components/admin/image-manager";
 import {
+  createCategory,
   createProduct,
   deleteProduct,
   lookupHeartlandItem,
@@ -91,6 +92,7 @@ export function ProductForm({ product, categoryTree }: ProductFormProps) {
   const [price, setPrice] = useState(product ? String(product.price) : "");
   const [category, setCategory] = useState(product?.category ?? "");
   const [subcategory, setSubcategory] = useState(product?.subcategory ?? "");
+  const [tree, setTree] = useState(categoryTree);
   const [images, setImages] = useState<string[]>(product?.images ?? []);
   const [isNew, setIsNew] = useState(product?.is_new ?? true);
   const [onSale, setOnSale] = useState(product?.on_sale ?? false);
@@ -105,11 +107,23 @@ export function ProductForm({ product, categoryTree }: ProductFormProps) {
     toDraftVariants(product?.variants)
   );
   const [lookupPending, setLookupPending] = useState(false);
+  const [createKind, setCreateKind] = useState<"category" | "subcategory" | null>(null);
+  const [createName, setCreateName] = useState("");
+  const [createPending, setCreatePending] = useState(false);
+
+  useEffect(() => {
+    setTree(categoryTree);
+  }, [categoryTree]);
 
   const subcategoryOptions = useMemo(() => {
-    const parent = categoryTree.find((c) => c.slug === category);
+    const parent = tree.find((c) => c.slug === category);
     return parent?.children ?? [];
-  }, [categoryTree, category]);
+  }, [tree, category]);
+
+  const selectedParent = useMemo(
+    () => tree.find((c) => c.slug === category) ?? null,
+    [tree, category]
+  );
 
   const totalInventory = useMemo(() => {
     if (variants.length === 0) return product?.inventory_count ?? 0;
@@ -126,6 +140,80 @@ export function ProductForm({ product, categoryTree }: ProductFormProps) {
 
   const removeVariant = (key: string) => {
     setVariants((current) => current.filter((variant) => variant.key !== key));
+  };
+
+  const closeCreateDialog = () => {
+    setCreateKind(null);
+    setCreateName("");
+  };
+
+  const handleCreateCategoryOption = async () => {
+    const trimmed = createName.trim();
+    if (!trimmed) {
+      toast.error("Enter a name.");
+      return;
+    }
+    if (createKind === "subcategory" && !selectedParent) {
+      toast.error("Choose a category first.");
+      return;
+    }
+    if (createKind === "subcategory" && selectedParent?.id.startsWith("fallback-")) {
+      toast.error("Run migration 008_categories.sql in Supabase before adding subcategories.");
+      return;
+    }
+
+    const nextSlug = slugify(trimmed);
+    if (!nextSlug) {
+      toast.error("Name must include letters or numbers.");
+      return;
+    }
+
+    setCreatePending(true);
+    try {
+      const result = await createCategory({
+        name: trimmed,
+        slug: nextSlug,
+        description: "",
+        parent_id: createKind === "subcategory" ? selectedParent!.id : null,
+        sort_order: createKind === "subcategory" ? selectedParent!.children.length * 10 : tree.length * 10,
+      });
+      if (!result.ok || !result.id) {
+        toast.error(result.message);
+        return;
+      }
+
+      const created: CategoryNode = {
+        id: result.id,
+        name: trimmed,
+        slug: nextSlug,
+        description: "",
+        parent_id: createKind === "subcategory" ? selectedParent!.id : null,
+        sort_order: 0,
+        created_at: new Date().toISOString(),
+        children: [],
+      };
+
+      if (createKind === "category") {
+        setTree((current) => [...current, created]);
+        setCategory(nextSlug);
+        setSubcategory("");
+      } else {
+        setTree((current) =>
+          current.map((parent) =>
+            parent.id === selectedParent!.id
+              ? { ...parent, children: [...parent.children, created] }
+              : parent
+          )
+        );
+        setSubcategory(nextSlug);
+      }
+
+      toast.success(result.message);
+      closeCreateDialog();
+      router.refresh();
+    } finally {
+      setCreatePending(false);
+    }
   };
 
   const buildInput = (): ProductInput => {
@@ -355,6 +443,11 @@ export function ProductForm({ product, categoryTree }: ProductFormProps) {
           <Select
             value={category}
             onValueChange={(value) => {
+              if (value === "__new_category__") {
+                setCreateKind("category");
+                setCreateName("");
+                return;
+              }
               setCategory(value);
               setSubcategory("");
             }}
@@ -364,11 +457,12 @@ export function ProductForm({ product, categoryTree }: ProductFormProps) {
               <SelectValue placeholder="Choose a category" />
             </SelectTrigger>
             <SelectContent>
-              {categoryTree.map((opt) => (
+              {tree.map((opt) => (
                 <SelectItem key={opt.slug} value={opt.slug}>
                   {opt.name}
                 </SelectItem>
               ))}
+              <SelectItem value="__new_category__">+ New category…</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -377,15 +471,28 @@ export function ProductForm({ product, categoryTree }: ProductFormProps) {
           <Label>Subcategory</Label>
           <Select
             value={subcategory || "__none__"}
-            onValueChange={(value) => setSubcategory(value === "__none__" ? "" : value)}
-            disabled={subcategoryOptions.length === 0}
+            onValueChange={(value) => {
+              if (value === "__new_subcategory__") {
+                if (!category) {
+                  toast.error("Choose a category first.");
+                  return;
+                }
+                setCreateKind("subcategory");
+                setCreateName("");
+                return;
+              }
+              setSubcategory(value === "__none__" ? "" : value);
+            }}
+            disabled={!category}
           >
             <SelectTrigger className="rounded-none w-full">
               <SelectValue
                 placeholder={
-                  subcategoryOptions.length === 0
-                    ? "No subcategories yet"
-                    : "Optional subcategory"
+                  !category
+                    ? "Choose a category first"
+                    : subcategoryOptions.length === 0
+                      ? "Optional — or create one"
+                      : "Optional subcategory"
                 }
               />
             </SelectTrigger>
@@ -396,12 +503,78 @@ export function ProductForm({ product, categoryTree }: ProductFormProps) {
                   {opt.name}
                 </SelectItem>
               ))}
+              {category ? (
+                <SelectItem value="__new_subcategory__">+ New subcategory…</SelectItem>
+              ) : null}
             </SelectContent>
           </Select>
-          <p className="text-[11px] text-muted-foreground">
-            Manage categories in Admin → Categories (e.g. Tops → Tees).
-          </p>
         </div>
+
+        <Dialog
+          open={createKind !== null}
+          onOpenChange={(open) => {
+            if (!open) closeCreateDialog();
+          }}
+        >
+          <DialogContent className="rounded-none sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="font-serif text-2xl font-normal">
+                {createKind === "subcategory" ? "New subcategory" : "New category"}
+              </DialogTitle>
+              <DialogDescription>
+                {createKind === "subcategory"
+                  ? `Create under ${selectedParent?.name ?? "the selected category"}.`
+                  : "Adds a top-level shop category you can assign immediately."}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-1.5 py-2">
+              <Label htmlFor="new-category-name">Name</Label>
+              <Input
+                id="new-category-name"
+                value={createName}
+                onChange={(e) => setCreateName(e.target.value)}
+                placeholder={createKind === "subcategory" ? "e.g. Tees" : "e.g. Outerwear"}
+                className="rounded-none"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void handleCreateCategoryOption();
+                  }
+                }}
+              />
+              {createName.trim() ? (
+                <p className="text-[11px] text-muted-foreground font-mono">
+                  slug: {slugify(createName)}
+                </p>
+              ) : null}
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-none"
+                onClick={closeCreateDialog}
+                disabled={createPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                className="rounded-none tracking-[0.16em] uppercase text-xs gap-2"
+                onClick={() => void handleCreateCategoryOption()}
+                disabled={createPending}
+              >
+                {createPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Plus className="size-4" />
+                )}
+                Create
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <div className="sm:col-span-2 space-y-1.5">
           <Label htmlFor="description">Description</Label>

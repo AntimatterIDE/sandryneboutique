@@ -214,12 +214,21 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
               : " in the catalog"}.
           </p>
         </div>
-        <Button asChild className="rounded-none tracking-[0.16em] uppercase text-xs gap-2 w-full sm:w-auto">
-          <Link href="/admin/products/new">
-            <Plus className="size-4" />
-            New Product
-          </Link>
-        </Button>
+        <div className="flex flex-col gap-2 w-full sm:w-auto sm:flex-row">
+          <Button
+            asChild
+            variant="outline"
+            className="rounded-none tracking-[0.16em] uppercase text-xs gap-2"
+          >
+            <Link href="/admin/categories">Categories</Link>
+          </Button>
+          <Button asChild className="rounded-none tracking-[0.16em] uppercase text-xs gap-2">
+            <Link href="/admin/products/new">
+              <Plus className="size-4" />
+              New Product
+            </Link>
+          </Button>
+        </div>
       </header>
 
       <Suspense>
