@@ -167,7 +167,9 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
   }
 
   // Heartland Item # search: import/refresh product with live inventory, open editor.
+  // Must not revalidatePath during this render — that crashes the RSC.
   let heartlandImportError: string | null = null;
+  let heartlandRedirectId: string | null = null;
   if (
     q &&
     page === 1 &&
@@ -176,14 +178,26 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
     image === "all" &&
     looksLikeHeartlandItemQuery(q)
   ) {
-    const ensured = await ensureProductFromHeartland(q);
-    if (ensured.ok && ensured.id) {
-      redirect(`/admin/products/${ensured.id}`);
+    try {
+      const ensured = await ensureProductFromHeartland(q);
+      if (ensured.ok && ensured.id) {
+        heartlandRedirectId = ensured.id;
+      } else if (products.length === 0) {
+        heartlandImportError = ensured.message;
+      }
+    } catch (err) {
+      console.error("Heartland Item # import failed:", err);
+      if (products.length === 0) {
+        heartlandImportError =
+          err instanceof Error
+            ? err.message
+            : "Could not import that Item # from Heartland.";
+      }
     }
-    // Only surface import errors when catalog search also found nothing.
-    if (products.length === 0) {
-      heartlandImportError = ensured.message;
-    }
+  }
+
+  if (heartlandRedirectId) {
+    redirect(`/admin/products/${heartlandRedirectId}`);
   }
 
   const totalPages = Math.max(1, Math.ceil(total / ADMIN_PAGE_SIZE));

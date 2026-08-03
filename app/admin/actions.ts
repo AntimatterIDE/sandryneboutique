@@ -387,7 +387,15 @@ async function findExistingProductForVariants(
   };
 }
 
-export async function createProduct(input: ProductInput): Promise<ActionResult> {
+type ProductWriteOptions = {
+  /** Skip cache revalidation — required when writing during a Server Component render. */
+  revalidate?: boolean;
+};
+
+export async function createProduct(
+  input: ProductInput,
+  options: ProductWriteOptions = {}
+): Promise<ActionResult> {
   const denied = await requireAdmin();
   if (denied) return denied;
 
@@ -404,7 +412,7 @@ export async function createProduct(input: ProductInput): Promise<ActionResult> 
       ...input,
       images: input.images.length > 0 ? input.images : existing.images,
     };
-    const updated = await updateProduct(existing.id, merged);
+    const updated = await updateProduct(existing.id, merged, options);
     if (!updated.ok) return updated;
     return {
       ok: true,
@@ -440,11 +448,15 @@ export async function createProduct(input: ProductInput): Promise<ActionResult> 
     return { ok: false, message: variantError };
   }
 
-  revalidateStore();
+  if (options.revalidate !== false) revalidateStore();
   return { ok: true, message: "Product created.", id: data.id };
 }
 
-export async function updateProduct(id: string, input: ProductInput): Promise<ActionResult> {
+export async function updateProduct(
+  id: string,
+  input: ProductInput,
+  options: ProductWriteOptions = {}
+): Promise<ActionResult> {
   const denied = await requireAdmin();
   if (denied) return denied;
 
@@ -485,7 +497,7 @@ export async function updateProduct(id: string, input: ProductInput): Promise<Ac
     if (variantError) return { ok: false, message: variantError };
   }
 
-  revalidateStore();
+  if (options.revalidate !== false) revalidateStore();
   return { ok: true, message: "Product updated.", id };
 }
 
@@ -1032,7 +1044,7 @@ export async function ensureProductFromHeartland(
       id: idByItem.get(variant.heartland_item_id),
     }));
 
-    const updated = await updateProduct(existing.id, input);
+    const updated = await updateProduct(existing.id, input, { revalidate: false });
     if (!updated.ok) return updated;
     return {
       ok: true,
@@ -1041,7 +1053,7 @@ export async function ensureProductFromHeartland(
     };
   }
 
-  const created = await createProduct(input);
+  const created = await createProduct(input, { revalidate: false });
   if (!created.ok) return created;
   return {
     ok: true,
