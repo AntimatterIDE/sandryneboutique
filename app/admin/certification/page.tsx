@@ -17,8 +17,8 @@ export const dynamic = "force-dynamic";
 export default function AdminCertificationPage() {
   const publicKey = process.env.NEXT_PUBLIC_HEARTLAND_PUBLIC_KEY || null;
   const certMode = heartlandIsCertMode();
-  const developerId = process.env.HEARTLAND_DEVELOPER_ID || "000000";
-  const versionNumber = process.env.HEARTLAND_VERSION_NUMBER || "0000";
+  const developerId = process.env.HEARTLAND_DEVELOPER_ID || "002914";
+  const versionNumber = process.env.HEARTLAND_VERSION_NUMBER || "6401";
 
   return (
     <div className="space-y-8">

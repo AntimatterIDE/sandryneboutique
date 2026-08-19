@@ -24,8 +24,8 @@ function ensureConfigured() {
   if (configured) return;
   const config = new PorticoConfig();
   config.secretApiKey = process.env.HEARTLAND_SECRET_KEY!;
-  config.developerId = process.env.HEARTLAND_DEVELOPER_ID || "000000";
-  config.versionNumber = process.env.HEARTLAND_VERSION_NUMBER || "0000";
+  config.developerId = process.env.HEARTLAND_DEVELOPER_ID || "002914";
+  config.versionNumber = process.env.HEARTLAND_VERSION_NUMBER || "6401";
   ServicesContainer.configureService(config);
   configured = true;
 }
