@@ -19,6 +19,7 @@ import { useHydrated } from "@/lib/hooks/use-hydrated";
 import type { ShippingAddress } from "@/lib/types";
 import { formatPrice } from "@/lib/types";
 import { processCheckout } from "@/app/(store)/checkout/actions";
+import { HCaptchaField } from "@/components/checkout/hcaptcha-field";
 
 interface TokenSuccessResponse {
   paymentReference: string;
@@ -57,7 +58,13 @@ const EMPTY_SHIPPING: ShippingAddress = {
   country: "United States",
 };
 
-export function CheckoutForm({ publicKey }: { publicKey: string | null }) {
+export function CheckoutForm({
+  publicKey,
+  captchaSiteKey,
+}: {
+  publicKey: string | null;
+  captchaSiteKey: string | null;
+}) {
   const router = useRouter();
   const { items, clearCart } = useCart();
   const hydrated = useHydrated();
@@ -66,17 +73,20 @@ export function CheckoutForm({ publicKey }: { publicKey: string | null }) {
   const [scriptReady, setScriptReady] = useState(false);
   const [discountInput, setDiscountInput] = useState("");
   const [appliedCode, setAppliedCode] = useState<string | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const formMounted = useRef(false);
 
   // Refs so the token-success handler (bound once) always sees current values.
   const shippingRef = useRef(shipping);
   const itemsRef = useRef(items);
   const appliedCodeRef = useRef(appliedCode);
+  const captchaTokenRef = useRef(captchaToken);
   useEffect(() => {
     shippingRef.current = shipping;
     itemsRef.current = items;
     appliedCodeRef.current = appliedCode;
-  }, [shipping, items, appliedCode]);
+    captchaTokenRef.current = captchaToken;
+  }, [shipping, items, appliedCode, captchaToken]);
 
   const appliedDiscount = findDiscount(appliedCode);
   const subtotal = cartSubtotal(items);
@@ -122,6 +132,7 @@ export function CheckoutForm({ publicKey }: { publicKey: string | null }) {
             color: i.color,
           })),
           discountCode: appliedCodeRef.current,
+          captchaToken: captchaTokenRef.current,
         });
 
         if (result.ok) {
@@ -239,6 +250,12 @@ export function CheckoutForm({ publicKey }: { publicKey: string | null }) {
             </h2>
 
             <TrustBadges className="mb-5" />
+
+            {captchaSiteKey ? (
+              <div className="mb-5">
+                <HCaptchaField siteKey={captchaSiteKey} onToken={setCaptchaToken} />
+              </div>
+            ) : null}
 
             {publicKey ? (
               <>

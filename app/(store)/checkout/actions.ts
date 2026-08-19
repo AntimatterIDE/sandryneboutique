@@ -1,5 +1,6 @@
 "use server";
 
+import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { supabaseConfigured } from "@/lib/data/products";
@@ -8,6 +9,8 @@ import {
   heartlandRetailConfigured,
   syncPaidOrderToRetail,
 } from "@/lib/heartland-retail";
+import { consumeCheckoutAttempt, getClientIp } from "@/lib/checkout-velocity";
+import { hcaptchaConfigured, verifyHCaptcha } from "@/lib/hcaptcha";
 import { FLAT_SHIPPING_RATE, FREE_SHIPPING_THRESHOLD } from "@/lib/constants";
 import { discountAmount, findDiscount } from "@/lib/discounts";
 import type { OrderItem, Product, ProductVariant, ShippingAddress } from "@/lib/types";
@@ -26,6 +29,7 @@ export interface CheckoutInput {
   shipping: ShippingAddress;
   lines: CheckoutLine[];
   discountCode?: string | null;
+  captchaToken?: string | null;
 }
 
 export type CheckoutResult =
@@ -53,6 +57,23 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
 
   if (!input.token) {
     return { ok: false, error: "Missing payment token. Please re-enter your card details." };
+  }
+
+  const headerList = await headers();
+  const ip = getClientIp(headerList);
+  const velocity = consumeCheckoutAttempt(ip);
+  if (!velocity.ok) {
+    return {
+      ok: false,
+      error: `Too many checkout attempts. Please wait ${velocity.retryAfterSec} seconds and try again.`,
+    };
+  }
+
+  if (hcaptchaConfigured()) {
+    const captcha = await verifyHCaptcha(input.captchaToken ?? undefined, ip);
+    if (!captcha.ok) {
+      return { ok: false, error: captcha.error };
+    }
   }
 
   const shippingError = validateShipping(input.shipping);

@@ -2,12 +2,20 @@ import "server-only";
 import {
   Address,
   CreditCardData,
+  EcommerceInfo,
   PorticoConfig,
   ServicesContainer,
+  Transaction,
 } from "globalpayments-api";
 
 export function heartlandConfigured(): boolean {
   return Boolean(process.env.HEARTLAND_SECRET_KEY);
+}
+
+export function heartlandIsCertMode(): boolean {
+  const publicKey = process.env.NEXT_PUBLIC_HEARTLAND_PUBLIC_KEY ?? "";
+  const secretKey = process.env.HEARTLAND_SECRET_KEY ?? "";
+  return publicKey.includes("_cert_") || secretKey.includes("_cert_");
 }
 
 let configured = false;
@@ -22,6 +30,18 @@ function ensureConfigured() {
   configured = true;
 }
 
+export function newInvoiceNumber(prefix = "SB"): string {
+  const raw = `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  return raw.replace(/[^a-zA-Z0-9]/g, "").slice(0, 16).toUpperCase();
+}
+
+function ecommerceInfoForToday(date = new Date()): EcommerceInfo {
+  const info = new EcommerceInfo();
+  info.shipDay = String(date.getDate());
+  info.shipMonth = String(date.getMonth() + 1);
+  return info;
+}
+
 export interface ChargeInput {
   /** Single-use payment token from Heartland hosted fields */
   token: string;
@@ -29,12 +49,49 @@ export interface ChargeInput {
   amount: number;
   postalCode: string;
   streetAddress: string;
+  invoiceNumber?: string;
+  allowDuplicates?: boolean;
 }
 
 export interface ChargeResult {
   ok: boolean;
   transactionId?: string;
+  invoiceNumber?: string;
   message?: string;
+  responseCode?: string;
+  avsResponseCode?: string;
+  cvnResponseCode?: string;
+}
+
+function gatewayResult(
+  response: Transaction,
+  invoiceNumber?: string
+): ChargeResult {
+  if (response.responseCode === "00") {
+    return {
+      ok: true,
+      transactionId: response.transactionId,
+      invoiceNumber,
+      responseCode: response.responseCode,
+      avsResponseCode: response.avsResponseCode,
+      cvnResponseCode: response.cvnResponseCode,
+    };
+  }
+  return {
+    ok: false,
+    transactionId: response.transactionId,
+    invoiceNumber,
+    responseCode: response.responseCode,
+    avsResponseCode: response.avsResponseCode,
+    cvnResponseCode: response.cvnResponseCode,
+    message: declineMessage(response.responseCode, response.responseMessage),
+  };
+}
+
+function gatewayError(err: unknown, fallback: string): ChargeResult {
+  console.error("Heartland request failed:", err);
+  const message = err instanceof Error && err.message ? err.message : fallback;
+  return { ok: false, message: fallback, responseCode: message };
 }
 
 export async function chargeCard(input: ChargeInput): Promise<ChargeResult> {
@@ -47,26 +104,91 @@ export async function chargeCard(input: ChargeInput): Promise<ChargeResult> {
   address.postalCode = input.postalCode;
   address.streetAddress1 = input.streetAddress;
 
+  const invoiceNumber = input.invoiceNumber?.trim() || newInvoiceNumber();
+
   try {
     const response = await card
       .charge(input.amount)
       .withCurrency("USD")
       .withAddress(address)
+      .withInvoiceNumber(invoiceNumber)
+      .withEcommerceInfo(ecommerceInfoForToday())
+      .withAllowDuplicates(Boolean(input.allowDuplicates))
       .execute();
 
-    if (response.responseCode === "00") {
-      return { ok: true, transactionId: response.transactionId };
-    }
-    return {
-      ok: false,
-      message: declineMessage(response.responseCode, response.responseMessage),
-    };
+    return gatewayResult(response, invoiceNumber);
   } catch (err) {
-    console.error("Heartland charge failed:", err);
-    return {
-      ok: false,
-      message: "We couldn't process your payment. Please check your card details and try again.",
-    };
+    return gatewayError(
+      err,
+      "We couldn't process your payment. Please check your card details and try again."
+    );
+  }
+}
+
+export interface RefundInput {
+  token: string;
+  amount: number;
+  postalCode?: string;
+  streetAddress?: string;
+  invoiceNumber?: string;
+  allowDuplicates?: boolean;
+}
+
+export async function refundCard(input: RefundInput): Promise<ChargeResult> {
+  ensureConfigured();
+
+  const card = new CreditCardData();
+  card.token = input.token;
+
+  const invoiceNumber = input.invoiceNumber?.trim() || newInvoiceNumber("RF");
+
+  try {
+    let builder = card
+      .refund(input.amount)
+      .withCurrency("USD")
+      .withInvoiceNumber(invoiceNumber)
+      .withEcommerceInfo(ecommerceInfoForToday())
+      .withAllowDuplicates(Boolean(input.allowDuplicates));
+
+    if (input.postalCode || input.streetAddress) {
+      const address = new Address();
+      if (input.postalCode) address.postalCode = input.postalCode;
+      if (input.streetAddress) address.streetAddress1 = input.streetAddress;
+      builder = builder.withAddress(address);
+    }
+
+    const response = await builder.execute();
+    return gatewayResult(response, invoiceNumber);
+  } catch (err) {
+    return gatewayError(err, "We couldn't refund this card. Please try again.");
+  }
+}
+
+export async function reverseTransaction(
+  transactionId: string,
+  amount: number
+): Promise<ChargeResult> {
+  ensureConfigured();
+
+  try {
+    const response = await Transaction.fromId(transactionId)
+      .reverse(amount)
+      .withCurrency("USD")
+      .execute();
+    return gatewayResult(response);
+  } catch (err) {
+    return gatewayError(err, "We couldn't reverse this transaction. Please try again.");
+  }
+}
+
+export async function voidTransaction(transactionId: string): Promise<ChargeResult> {
+  ensureConfigured();
+
+  try {
+    const response = await Transaction.fromId(transactionId).void().execute();
+    return gatewayResult(response);
+  } catch (err) {
+    return gatewayError(err, "We couldn't void this transaction. Please try again.");
   }
 }
 

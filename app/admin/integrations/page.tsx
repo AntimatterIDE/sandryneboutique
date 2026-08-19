@@ -86,6 +86,11 @@ export default async function AdminIntegrationsPage() {
           <h1 className="font-serif text-3xl tracking-tight">Integrations</h1>
           <p className="text-sm text-muted-foreground mt-1">
             Env var presence and live Heartland connectivity — secrets are never shown in full.
+            Run the Secure Submit script from{" "}
+            <a href="/admin/certification" className="underline underline-offset-2">
+              Certification
+            </a>
+            , not public checkout.
           </p>
         </div>
         <div className="flex items-center gap-2 text-sm border border-foreground/10 px-3 py-2">

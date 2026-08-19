@@ -51,13 +51,21 @@ Card charges on this site use Portico — not the Retail inventory API.
 
 1. Create a developer account at [developer.globalpayments.com](https://developer.globalpayments.com/heartland/getting-started/overview).
 2. Grab your **public key** (`pkapi_cert_...`) and **secret key** (`skapi_cert_...`).
-3. Add them to `.env.local`. The checkout page renders Heartland hosted fields
-   (card data never touches this server); the Server Action charges the
-   single-use token via the `globalpayments-api` SDK and records the order.
-4. Optional: set `HEARTLAND_DEVELOPER_ID` / `HEARTLAND_VERSION_NUMBER` from your
-   Heartland rep before going live (defaults are certification placeholders).
-5. Sandbox smoke test: place an order with a cert card. Then switch to
-   `pkapi_prod_` / `skapi_prod_` keys in Vercel for production.
+3. Add them in **Vercel → Settings → Environment Variables** (this project is
+   staging until the custom domain is pointed here). Hosted fields tokenize in
+   the browser; the Server Action charges the token via `globalpayments-api`.
+4. Set `HEARTLAND_DEVELOPER_ID=002914` and `HEARTLAND_VERSION_NUMBER=6401`
+   (assigned for this boutique). Every Portico request must send these.
+5. Add hCaptcha keys (`NEXT_PUBLIC_HCAPTCHA_SITE_KEY` / `HCAPTCHA_SECRET_KEY`).
+   Checkout also rate-limits 5 charges per IP per 10 minutes.
+6. **Certification on Vercel staging** (`https://sandryneboutique.vercel.app`): keep cert keys
+   (`pkapi_cert_` / `skapi_cert_`) on this Vercel project. Run the script from
+   **Admin → Certification** on that URL — never through public checkout, or live
+   Retail inventory will drop. After Heartland sends the certification letter, swap
+   to `pkapi_prod_` / `skapi_prod_` on the same Vercel project, redeploy, then place
+   one cheap live order and confirm Admin → Orders plus Retail sync. Point the custom
+   domain at this project only after that cutover.
+
 
 ## 3. Heartland Retail (inventory source of truth)
 
@@ -122,8 +130,10 @@ Add all of these in **Vercel > Project > Settings > Environment Variables**:
 | `SUPABASE_SERVICE_ROLE_KEY`        | Secret  | Server-only: order writes, admin ops       |
 | `NEXT_PUBLIC_HEARTLAND_PUBLIC_KEY` | Public  | Hosted fields tokenization                 |
 | `HEARTLAND_SECRET_KEY`             | Secret  | Server-side Portico charges                |
-| `HEARTLAND_DEVELOPER_ID`           | Secret  | Portico developer id (optional)            |
-| `HEARTLAND_VERSION_NUMBER`         | Secret  | Portico version number (optional)          |
+| `HEARTLAND_DEVELOPER_ID`           | Secret  | Portico developer id (`002914`)            |
+| `HEARTLAND_VERSION_NUMBER`         | Secret  | Portico version number (`6401`)            |
+| `NEXT_PUBLIC_HCAPTCHA_SITE_KEY`    | Public  | Checkout hCaptcha widget                   |
+| `HCAPTCHA_SECRET_KEY`              | Secret  | Server-side hCaptcha verify                |
 | `HEARTLAND_RETAIL_SUBDOMAIN`       | Secret  | Retail host subdomain                      |
 | `HEARTLAND_RETAIL_API_TOKEN`       | Secret  | Retail REST Bearer token                   |
 | `HEARTLAND_RETAIL_STATION_ID`      | Secret  | Website station id                         |
@@ -143,6 +153,7 @@ app/
   (store)/            Storefront: home, shop/[category], products/[slug],
                       checkout, account, login, policies
   admin/              Admin command center (auth + role gated)
+                      including /admin/certification (Portico test script)
   api/cron/           Heartland Retail → Supabase inventory mirror
   actions/            Shared server actions (auth, newsletter)
 components/

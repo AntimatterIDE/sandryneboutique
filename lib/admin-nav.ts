@@ -1,5 +1,6 @@
 import {
   Activity,
+  ClipboardCheck,
   FileText,
   Folders,
   Home,
@@ -29,6 +30,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
   { href: "/admin/customers", label: "Customers", icon: Users, match: "prefix" },
   { href: "/admin/newsletter", label: "Newsletter", icon: Mail, match: "prefix" },
   { href: "/admin/integrations", label: "Integrations", icon: Activity, match: "prefix" },
+  { href: "/admin/certification", label: "Certification", icon: ClipboardCheck, match: "prefix" },
 ];
 
 export function isAdminNavActive(pathname: string, item: AdminNavItem): boolean {

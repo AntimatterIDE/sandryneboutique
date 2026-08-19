@@ -2,6 +2,7 @@ import "server-only";
 
 import { heartlandConfigured } from "@/lib/heartland";
 import { heartlandRetailConfigured } from "@/lib/heartland-retail";
+import { hcaptchaConfigured, hcaptchaUsingTestKeys } from "@/lib/hcaptcha";
 
 export type HealthStatus = "ok" | "warn" | "missing" | "error";
 
@@ -204,19 +205,16 @@ export async function getIntegrationHealth(): Promise<IntegrationHealthReport> {
     envCheck("portico-secret", "Portico secret key", process.env.HEARTLAND_SECRET_KEY, {
       preview: maskKey(process.env.HEARTLAND_SECRET_KEY, 18),
     }),
-    envCheck("developer-id", "Portico developer ID", process.env.HEARTLAND_DEVELOPER_ID || "000000", {
-      preview: process.env.HEARTLAND_DEVELOPER_ID || "000000",
-      optional: true,
+    envCheck("developer-id", "Portico developer ID", process.env.HEARTLAND_DEVELOPER_ID, {
+      preview: process.env.HEARTLAND_DEVELOPER_ID,
     }),
-    envCheck(
-      "version-number",
-      "Portico version number",
-      process.env.HEARTLAND_VERSION_NUMBER || "0000",
-      {
-        preview: process.env.HEARTLAND_VERSION_NUMBER || "0000",
-        optional: true,
-      }
-    ),
+    envCheck("version-number", "Portico version number", process.env.HEARTLAND_VERSION_NUMBER, {
+      preview: process.env.HEARTLAND_VERSION_NUMBER,
+    }),
+    envCheck("hcaptcha-site", "hCaptcha site key", process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY, {
+      preview: maskKey(process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY, 18),
+    }),
+    envCheck("hcaptcha-secret", "hCaptcha secret", process.env.HCAPTCHA_SECRET_KEY),
     envCheck("retail-subdomain", "Retail subdomain", process.env.HEARTLAND_RETAIL_SUBDOMAIN, {
       preview: process.env.HEARTLAND_RETAIL_SUBDOMAIN,
     }),
@@ -275,14 +273,39 @@ export async function getIntegrationHealth(): Promise<IntegrationHealthReport> {
     },
     whoami,
     location,
+    {
+      id: "hcaptcha-live",
+      label: "hCaptcha",
+      status: !hcaptchaConfigured()
+        ? "missing"
+        : hcaptchaUsingTestKeys()
+          ? "warn"
+          : "ok",
+      detail: !hcaptchaConfigured()
+        ? "Not configured — checkout will skip the widget."
+        : hcaptchaUsingTestKeys()
+          ? "Publisher test keys — replace with a real hCaptcha pair before signing Heartland’s form or going live."
+          : "Checkout requires a passing hCaptcha before charging.",
+    },
+    {
+      id: "velocity",
+      label: "Checkout velocity limit",
+      status: "ok",
+      detail: "5 charge attempts per IP per 10 minutes.",
+    },
   ];
 
   const tips: string[] = [];
   if (!present(process.env.SUPABASE_SERVICE_ROLE_KEY)) {
     tips.push("Run supabase/migrations/007_heartland_retail.sql in the Supabase SQL Editor.");
   }
+  if (process.env.HEARTLAND_DEVELOPER_ID !== "002914" || process.env.HEARTLAND_VERSION_NUMBER !== "6401") {
+    tips.push("Set HEARTLAND_DEVELOPER_ID=002914 and HEARTLAND_VERSION_NUMBER=6401 (assigned for Sandryne Boutique).");
+  }
   if (isCert) {
-    tips.push("Use Heartland sandbox test cards for checkout until you switch to pkapi_prod_ keys.");
+    tips.push(
+      "Use Admin → Certification on the Vercel staging URL to run the Secure Submit script. Do not use public checkout — that would decrement live Retail stock."
+    );
   }
   if (heartlandRetailConfigured()) {
     tips.push(
