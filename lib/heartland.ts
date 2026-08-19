@@ -18,14 +18,27 @@ export function heartlandIsCertMode(): boolean {
   return publicKey.includes("_cert_") || secretKey.includes("_cert_");
 }
 
+/** Assigned for Sandryne Boutique. Treat Heartland placeholders as unset. */
+export function porticoDeveloperId(): string {
+  const raw = process.env.HEARTLAND_DEVELOPER_ID?.trim();
+  if (!raw || raw === "000000") return "002914";
+  return raw;
+}
+
+export function porticoVersionNumber(): string {
+  const raw = process.env.HEARTLAND_VERSION_NUMBER?.trim();
+  if (!raw || raw === "0000") return "6401";
+  return raw;
+}
+
 let configured = false;
 
 function ensureConfigured() {
   if (configured) return;
   const config = new PorticoConfig();
   config.secretApiKey = process.env.HEARTLAND_SECRET_KEY!;
-  config.developerId = process.env.HEARTLAND_DEVELOPER_ID || "002914";
-  config.versionNumber = process.env.HEARTLAND_VERSION_NUMBER || "6401";
+  config.developerId = porticoDeveloperId();
+  config.versionNumber = porticoVersionNumber();
   ServicesContainer.configureService(config);
   configured = true;
 }

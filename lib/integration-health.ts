@@ -1,6 +1,6 @@
 import "server-only";
 
-import { heartlandConfigured } from "@/lib/heartland";
+import { heartlandConfigured, porticoDeveloperId, porticoVersionNumber } from "@/lib/heartland";
 import { heartlandRetailConfigured } from "@/lib/heartland-retail";
 import { hcaptchaConfigured, hcaptchaUsingTestKeys } from "@/lib/hcaptcha";
 
@@ -205,11 +205,11 @@ export async function getIntegrationHealth(): Promise<IntegrationHealthReport> {
     envCheck("portico-secret", "Portico secret key", process.env.HEARTLAND_SECRET_KEY, {
       preview: maskKey(process.env.HEARTLAND_SECRET_KEY, 18),
     }),
-    envCheck("developer-id", "Portico developer ID", process.env.HEARTLAND_DEVELOPER_ID || "002914", {
-      preview: process.env.HEARTLAND_DEVELOPER_ID || "002914",
+    envCheck("developer-id", "Portico developer ID", porticoDeveloperId(), {
+      preview: porticoDeveloperId(),
     }),
-    envCheck("version-number", "Portico version number", process.env.HEARTLAND_VERSION_NUMBER || "6401", {
-      preview: process.env.HEARTLAND_VERSION_NUMBER || "6401",
+    envCheck("version-number", "Portico version number", porticoVersionNumber(), {
+      preview: porticoVersionNumber(),
     }),
     envCheck("hcaptcha-site", "hCaptcha site key", process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY, {
       preview: maskKey(process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY, 18),
@@ -299,9 +299,7 @@ export async function getIntegrationHealth(): Promise<IntegrationHealthReport> {
   if (!present(process.env.SUPABASE_SERVICE_ROLE_KEY)) {
     tips.push("Run supabase/migrations/007_heartland_retail.sql in the Supabase SQL Editor.");
   }
-  const developerId = process.env.HEARTLAND_DEVELOPER_ID || "002914";
-  const versionNumber = process.env.HEARTLAND_VERSION_NUMBER || "6401";
-  if (developerId !== "002914" || versionNumber !== "6401") {
+  if (porticoDeveloperId() !== "002914" || porticoVersionNumber() !== "6401") {
     tips.push("Set HEARTLAND_DEVELOPER_ID=002914 and HEARTLAND_VERSION_NUMBER=6401 (assigned for Sandryne Boutique).");
   }
   if (isCert) {
