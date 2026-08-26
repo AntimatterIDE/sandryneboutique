@@ -86,7 +86,8 @@ export default function AdminCertificationPage() {
             <a href={CERT_REVIEW_FORM_URL} className="underline underline-offset-2" target="_blank" rel="noreferrer">
               CNP Certification Review Request
             </a>
-            : software name Sandryne Boutique, Credit Sale + Refund + Void/Reversal, ACH No.
+            : software name Sandryne Boutique, Credit Sale + Refund (tied to original Gateway Trans
+            ID) + Void/Reversal, ACH No.
           </li>
           <li>
             Tania (merchant), you (developer), and the RM sign the eCommerce Cyber Security

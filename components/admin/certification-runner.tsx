@@ -45,7 +45,7 @@ declare global {
   }
 }
 
-type PendingOp = { type: "sale"; testId: string } | { type: "refund" };
+type PendingOp = { type: "sale"; testId: string };
 
 function resultLine(result: CertActionResult): string {
   const bits = [
@@ -67,6 +67,7 @@ export function CertificationRunner({ publicKey }: { publicKey: string | null })
   const [pending, setPending] = useState<PendingOp | null>(null);
   const [processing, setProcessing] = useState(false);
   const [visaTxnId, setVisaTxnId] = useState("");
+  const [mcTxnId, setMcTxnId] = useState("");
   const [log, setLog] = useState<CertActionResult[]>([]);
   const pendingRef = useRef<PendingOp | null>(null);
   const formMounted = useRef(false);
@@ -79,6 +80,9 @@ export function CertificationRunner({ publicKey }: { publicKey: string | null })
     setLog((prev) => [result, ...prev]);
     if (result.ok && result.testId === "9" && result.transactionId) {
       setVisaTxnId(result.transactionId);
+    }
+    if (result.ok && result.testId === "10" && result.transactionId) {
+      setMcTxnId(result.transactionId);
     }
     if (result.ok) {
       toast.success(result.label);
@@ -96,10 +100,7 @@ export function CertificationRunner({ publicKey }: { publicKey: string | null })
       }
       setProcessing(true);
       try {
-        const result =
-          op.type === "sale"
-            ? await runCertSale({ token, testId: op.testId })
-            : await runCertRefund({ token });
+        const result = await runCertSale({ token, testId: op.testId });
         appendResult(result);
       } catch (err) {
         console.error("Cert transaction failed:", err);
@@ -141,11 +142,17 @@ export function CertificationRunner({ publicKey }: { publicKey: string | null })
     toast.message(`Test ${testId} armed — complete the card form with that brand.`);
   };
 
-  const selectRefund = () => {
-    const next: PendingOp = { type: "refund" };
-    setPending(next);
-    pendingRef.current = next;
-    toast.message("Refund 34 armed — complete the card form with a Mastercard.");
+  const runRefund = async () => {
+    setProcessing(true);
+    try {
+      const result = await runCertRefund({ transactionId: mcTxnId });
+      appendResult(result);
+    } catch (err) {
+      console.error("Cert refund failed:", err);
+      toast.error("Refund request failed.");
+    } finally {
+      setProcessing(false);
+    }
   };
 
   const runReverse = async () => {
@@ -208,36 +215,15 @@ export function CertificationRunner({ publicKey }: { publicKey: string | null })
 
       <section className="border border-foreground/10 p-5 sm:p-6 space-y-4">
         <h2 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground">
-          5 · Refund (test 34)
-        </h2>
-        <p className="text-sm text-muted-foreground leading-relaxed">
-          Standalone Mastercard CreditReturn of ${CERT_REFUND_TEST.amount.toFixed(2)}. {CERT_REFUND_TEST.notes}
-        </p>
-        <Button
-          type="button"
-          variant={pending?.type === "refund" ? "default" : "outline"}
-          className="rounded-none tracking-[0.12em] uppercase text-xs"
-          disabled={processing || !publicKey}
-          onClick={selectRefund}
-        >
-          {pending?.type === "refund" ? "Armed" : "Arm refund 34"}
-        </Button>
-      </section>
-
-      <section className="border border-foreground/10 p-5 sm:p-6 space-y-4">
-        <h2 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground">
           Card form
         </h2>
         {pending ? (
           <p className="text-sm">
-            Armed:{" "}
-            <span className="font-medium">
-              {pending.type === "sale" ? `Sale ${pending.testId}` : "Refund 34"}
-            </span>
-            . Complete the fields below.
+            Armed: <span className="font-medium">Sale {pending.testId}</span>. Complete the fields
+            below.
           </p>
         ) : (
-          <p className="text-sm text-muted-foreground">Arm a sale or refund before submitting a card.</p>
+          <p className="text-sm text-muted-foreground">Arm a sale before submitting a card.</p>
         )}
 
         <div className="overflow-x-auto">
@@ -285,6 +271,32 @@ export function CertificationRunner({ publicKey }: { publicKey: string | null })
             Sending to Portico cert…
           </div>
         )}
+      </section>
+
+      <section className="border border-foreground/10 p-5 sm:p-6 space-y-4">
+        <h2 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground">
+          5 · Refund (test 34)
+        </h2>
+        <p className="text-sm text-muted-foreground leading-relaxed">{CERT_REFUND_TEST.notes}</p>
+        <div className="space-y-1.5 max-w-md">
+          <Label htmlFor="mc-txn">Test 10 transaction ID</Label>
+          <Input
+            id="mc-txn"
+            value={mcTxnId}
+            onChange={(e) => setMcTxnId(e.target.value)}
+            placeholder="Filled automatically after a successful test 10"
+            className="rounded-none font-mono text-sm"
+          />
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          className="rounded-none tracking-[0.12em] uppercase text-xs"
+          disabled={processing || !mcTxnId.trim()}
+          onClick={() => void runRefund()}
+        >
+          Refund ${CERT_REFUND_TEST.amount.toFixed(2)} against original txn
+        </Button>
       </section>
 
       <section className="border border-foreground/10 p-5 sm:p-6 space-y-4">

@@ -53,10 +53,9 @@ export const CERT_REFUND_TEST = {
   id: "34" as const,
   brand: "MasterCard",
   amount: 15.15,
-  streetAddress: "6860",
-  postalCode: "75024",
-  cvv: "123",
-  notes: "Standalone CreditReturn — tokenize a Mastercard, do not refund a prior sale.",
+  originalSaleTestId: "10" as const,
+  notes:
+    "CreditReturn of the $17.02 Mastercard sale from test 10, using that sale's Gateway Trans ID ($15.15 partial). Do not tokenize a new card.",
 };
 
 export const CERT_REVERSE_TEST = {

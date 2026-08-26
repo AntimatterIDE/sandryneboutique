@@ -147,6 +147,7 @@ export interface RefundInput {
   allowDuplicates?: boolean;
 }
 
+/** Unlinked CreditReturn (card token only). Do not use in production — Heartland requires GatewayTxnId. */
 export async function refundCard(input: RefundInput): Promise<ChargeResult> {
   ensureConfigured();
 
@@ -174,6 +175,24 @@ export async function refundCard(input: RefundInput): Promise<ChargeResult> {
     return gatewayResult(response, invoiceNumber);
   } catch (err) {
     return gatewayError(err, "We couldn't refund this card. Please try again.");
+  }
+}
+
+/** CreditReturn tied to the original sale's GatewayTxnId. Required in production. */
+export async function refundTransaction(
+  transactionId: string,
+  amount: number
+): Promise<ChargeResult> {
+  ensureConfigured();
+
+  try {
+    const response = await Transaction.fromId(transactionId)
+      .refund(amount)
+      .withCurrency("USD")
+      .execute();
+    return gatewayResult(response);
+  } catch (err) {
+    return gatewayError(err, "We couldn't refund this transaction. Please try again.");
   }
 }
 

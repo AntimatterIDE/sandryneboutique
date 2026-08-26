@@ -11,7 +11,7 @@ import {
   chargeCard,
   heartlandConfigured,
   heartlandIsCertMode,
-  refundCard,
+  refundTransaction,
   reverseTransaction,
   type ChargeResult,
 } from "@/lib/heartland";
@@ -70,15 +70,19 @@ export async function runCertSale(input: {
   };
 }
 
-export async function runCertRefund(input: { token: string }): Promise<CertActionResult> {
+export async function runCertRefund(input: {
+  transactionId: string;
+}): Promise<CertActionResult> {
   const authError = await requireAdmin();
   if (authError) {
     return { ok: false, message: authError, testId: CERT_REFUND_TEST.id, label: "Refund 34" };
   }
-  if (!input.token) {
+
+  const transactionId = input.transactionId.trim();
+  if (!transactionId) {
     return {
       ok: false,
-      message: "Missing payment token. Re-enter a Mastercard.",
+      message: "Paste the gateway transaction ID from test 10 (Mastercard $17.02).",
       testId: CERT_REFUND_TEST.id,
       label: "Refund 34",
     };
@@ -92,19 +96,11 @@ export async function runCertRefund(input: { token: string }): Promise<CertActio
     };
   }
 
-  const result = await refundCard({
-    token: input.token,
-    amount: CERT_REFUND_TEST.amount,
-    streetAddress: CERT_REFUND_TEST.streetAddress,
-    postalCode: CERT_REFUND_TEST.postalCode,
-    invoiceNumber: `CERT34${Date.now().toString(36).slice(-5)}`.toUpperCase().slice(0, 16),
-    allowDuplicates: true,
-  });
-
+  const result = await refundTransaction(transactionId, CERT_REFUND_TEST.amount);
   return {
     ...result,
     testId: CERT_REFUND_TEST.id,
-    label: `Refund 34 Mastercard $${CERT_REFUND_TEST.amount.toFixed(2)}`,
+    label: `Refund 34 of txn ${transactionId} ($${CERT_REFUND_TEST.amount.toFixed(2)})`,
   };
 }
 
