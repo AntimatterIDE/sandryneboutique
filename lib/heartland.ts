@@ -4,7 +4,9 @@ import {
   CreditCardData,
   EcommerceInfo,
   Environment,
+  PaymentMethodType,
   PorticoConfig,
+  ReportingService,
   ServicesContainer,
   Transaction,
 } from "globalpayments-api";
@@ -119,11 +121,13 @@ export interface ChargeResult {
   cvnResponseCode?: string;
 }
 
+const SUCCESS_CODES = new Set(["00", "0", "85", "10"]);
+
 function gatewayResult(
   response: Transaction,
   invoiceNumber?: string
 ): ChargeResult {
-  if (response.responseCode === "00") {
+  if (SUCCESS_CODES.has(response.responseCode ?? "")) {
     return {
       ok: true,
       transactionId: response.transactionId,
@@ -250,16 +254,28 @@ export async function refundCard(input: RefundInput): Promise<ChargeResult> {
   }
 }
 
+function porticoTransaction(transactionId: string): Transaction {
+  return Transaction.fromId(String(transactionId).trim(), PaymentMethodType.Credit);
+}
+
+function moneyString(value: number | string | undefined, fallback: number): string {
+  const parsed = typeof value === "string" ? Number(value) : value;
+  if (typeof parsed === "number" && Number.isFinite(parsed) && parsed > 0) {
+    return parsed.toFixed(2);
+  }
+  return fallback.toFixed(2);
+}
+
 /** CreditReturn tied to the original sale's GatewayTxnId. Required in production. */
 export async function refundTransaction(
   transactionId: string,
-  amount: number
+  amount: number | string
 ): Promise<ChargeResult> {
   ensureConfigured();
 
   try {
-    const response = await Transaction.fromId(transactionId)
-      .refund(amount)
+    const response = await porticoTransaction(transactionId)
+      .refund(moneyString(amount, Number(amount)))
       .withCurrency("USD")
       .execute();
     return gatewayResult(response);
@@ -270,13 +286,13 @@ export async function refundTransaction(
 
 export async function reverseTransaction(
   transactionId: string,
-  amount: number
+  amount: number | string
 ): Promise<ChargeResult> {
   ensureConfigured();
 
   try {
-    const response = await Transaction.fromId(transactionId)
-      .reverse(amount)
+    const response = await porticoTransaction(transactionId)
+      .reverse(moneyString(amount, Number(amount)))
       .withCurrency("USD")
       .execute();
     return gatewayResult(response);
@@ -289,26 +305,55 @@ export async function voidTransaction(transactionId: string): Promise<ChargeResu
   ensureConfigured();
 
   try {
-    const response = await Transaction.fromId(transactionId).void().execute();
+    const response = await porticoTransaction(transactionId).void().execute();
     return gatewayResult(response);
   } catch (err) {
     return gatewayError(err, "We couldn't void this transaction. Please try again.");
   }
 }
 
-function isUnsettledReturnError(result: ChargeResult): boolean {
-  const text = `${result.responseCode ?? ""} ${result.message ?? ""}`.toLowerCase();
+type PorticoTxnSnapshot = {
+  status?: string;
+  authorizedAmount?: string;
+  settlementAmount?: string;
+};
+
+function parsePorticoStatus(raw?: string): string {
+  return (raw ?? "").trim().toUpperCase();
+}
+
+function isAlreadyReleased(status?: string): boolean {
+  const value = parsePorticoStatus(status);
   return (
-    text.includes("exceeds the original settlement") ||
-    text.includes("return amount is zero") ||
-    text.includes("gateway response: 6") ||
-    /\b6\b/.test(result.responseCode ?? "") && text.includes("settlement")
+    value === "V" ||
+    value === "R" ||
+    value === "I" ||
+    value === "X" ||
+    value.includes("VOID") ||
+    value.includes("REVERS") ||
+    value.includes("INACTIVE")
   );
 }
 
+async function lookupPorticoTransaction(transactionId: string): Promise<PorticoTxnSnapshot | null> {
+  ensureConfigured();
+  try {
+    const detail = await ReportingService.transactionDetail(String(transactionId).trim()).execute();
+    return {
+      status: detail?.status ?? detail?.transactionStatus,
+      authorizedAmount: detail?.authorizedAmount,
+      settlementAmount: detail?.settlementAmount,
+    };
+  } catch (err) {
+    console.error("Heartland ReportTxnDetail failed:", err);
+    return null;
+  }
+}
+
 /**
- * Same-day pending sales must be reversed or voided. Refund (CreditReturn)
+ * Same-day pending sales must be voided or reversed. Refund (CreditReturn)
  * only works after Heartland settles the batch — otherwise Portico returns 6.
+ * If a prior attempt already released the hold, treat that as success.
  */
 export async function returnCardFunds(
   transactionId: string,
@@ -319,25 +364,70 @@ export async function returnCardFunds(
     return { ok: false, message: "There is no remaining amount to return on this card." };
   }
 
-  const reversed = await reverseTransaction(transactionId, dollars);
-  if (reversed.ok) return reversed;
-
-  const voided = await voidTransaction(transactionId);
-  if (voided.ok) return voided;
-
-  const refunded = await refundTransaction(transactionId, dollars);
-  if (refunded.ok) return refunded;
-
-  if (isUnsettledReturnError(refunded) || isUnsettledReturnError(reversed)) {
+  const snapshot = await lookupPorticoTransaction(transactionId);
+  if (snapshot && isAlreadyReleased(snapshot.status)) {
     return {
-      ok: false,
-      message:
-        "Heartland has not settled this charge yet, and the void/reverse also failed. Wait until the pending TEMP hold posts, then refund, or void it in the Heartland merchant terminal.",
-      responseCode: refunded.responseCode ?? reversed.responseCode,
+      ok: true,
+      transactionId,
+      responseCode: "00",
+      message: "This charge was already voided or reversed on Heartland.",
     };
   }
 
-  return refunded.ok ? refunded : voided.ok ? voided : reversed;
+  const reverseAmount = moneyString(snapshot?.authorizedAmount, dollars);
+  const settlement = Number(snapshot?.settlementAmount);
+  const refundAmount =
+    Number.isFinite(settlement) && settlement > 0
+      ? moneyString(Math.min(dollars, settlement), dollars)
+      : moneyString(dollars, dollars);
+  const status = parsePorticoStatus(snapshot?.status);
+  const settled = status === "C" || status === "CLEARED" || status === "CLOSED";
+
+  const attempts: ChargeResult[] = [];
+
+  if (!settled) {
+    const voided = await voidTransaction(transactionId);
+    attempts.push(voided);
+    if (voided.ok) return voided;
+
+    const reversed = await reverseTransaction(transactionId, reverseAmount);
+    attempts.push(reversed);
+    if (reversed.ok) return reversed;
+
+    const again = await lookupPorticoTransaction(transactionId);
+    if (again && isAlreadyReleased(again.status)) {
+      return {
+        ok: true,
+        transactionId,
+        responseCode: "00",
+        message: "This charge was already voided or reversed on Heartland.",
+      };
+    }
+  }
+
+  if (Number(refundAmount) > 0) {
+    const refunded = await refundTransaction(transactionId, refundAmount);
+    attempts.push(refunded);
+    if (refunded.ok) return refunded;
+  }
+
+  console.error("Heartland returnCardFunds failed:", {
+    transactionId,
+    status: snapshot?.status,
+    authorizedAmount: snapshot?.authorizedAmount,
+    settlementAmount: snapshot?.settlementAmount,
+    attempts: attempts.map((result) => result.message),
+  });
+
+  const detail = attempts
+    .map((result) => result.message)
+    .filter((message): message is string => Boolean(message))
+    .join(" ");
+  return {
+    ok: false,
+    message: detail || "We couldn't return this charge. Please try again.",
+    responseCode: attempts.find((result) => result.responseCode)?.responseCode,
+  };
 }
 
 function declineMessage(code: string | undefined, raw: string | undefined): string {
