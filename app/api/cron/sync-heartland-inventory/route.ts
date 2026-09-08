@@ -47,8 +47,10 @@ export async function GET(request: Request) {
   const { data: unsynced } = await admin
     .from("orders")
     .select("*")
-    .in("heartland_sync_status", ["failed", "pending"])
-    .is("refunded_at", null);
+    .eq("heartland_sync_status", "pending")
+    .is("refunded_at", null)
+    .neq("status", "returned")
+    .neq("status", "cancelled");
   if (unsynced?.length) {
     const { syncWebsiteOrderToRetail } = await import("@/lib/retail-order-sync");
     for (const order of unsynced) {

@@ -547,11 +547,14 @@ export async function getInventoryByItemIds(
 }
 
 export async function findCustomerByEmail(email: string): Promise<HeartlandCustomer | null> {
-  const filter = encodeURIComponent(JSON.stringify({ email: email.toLowerCase() }));
-  const { body } = await retailFetch(`/customers?_filter[]=${filter}&per_page=5`);
-  const result = body as SearchResult<HeartlandCustomer>;
-  const hits = result.results ?? [];
-  return hits[0] ?? null;
+  const variants = [...new Set([email.trim(), email.trim().toLowerCase()].filter(Boolean))];
+  for (const value of variants) {
+    const filter = encodeURIComponent(JSON.stringify({ email: value }));
+    const { body } = await retailFetch(`/customers?_filter[]=${filter}&per_page=5`);
+    const hits = (body as SearchResult<HeartlandCustomer>).results ?? [];
+    if (hits[0]) return hits[0];
+  }
+  return null;
 }
 
 export async function createCustomer(input: {
@@ -849,10 +852,19 @@ export async function completeInvoice(invoiceId: number): Promise<void> {
 }
 
 export async function voidSalesOrder(orderId: number): Promise<void> {
-  await retailFetch(`/sales/orders/${orderId}`, {
-    method: "PUT",
-    body: JSON.stringify({ status: "void" }),
-  });
+  let lastError: unknown;
+  for (const status of ["void", "cancelled", "canceled"]) {
+    try {
+      await retailFetch(`/sales/orders/${orderId}`, {
+        method: "PUT",
+        body: JSON.stringify({ status }),
+      });
+      return;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`Could not void sales order ${orderId}.`);
 }
 
 export async function voidInvoice(invoiceId: number): Promise<void> {
@@ -939,6 +951,12 @@ export async function createRetailReturn(input: {
       customer_id: input.customerId,
       affect_inventory: true,
     },
+    {
+      type: "Ticket",
+      station_id: stationId,
+      source_location_id: locationId,
+      customer_id: input.customerId,
+    },
   ];
 
   let ticketId: number | null = null;
@@ -1004,38 +1022,126 @@ export async function createRetailReturn(input: {
   return ticketId;
 }
 
+async function qtyForLines(lines: RetailCheckoutLine[]): Promise<Map<number, number>> {
+  return getInventoryByItemIds(lines.map((line) => line.heartlandItemId));
+}
+
+function shortfallQty(
+  lines: RetailCheckoutLine[],
+  before: Map<number, number>,
+  after: Map<number, number>
+): RetailCheckoutLine[] {
+  return lines
+    .map((line) => {
+      const start = before.get(line.heartlandItemId) ?? 0;
+      const end = after.get(line.heartlandItemId) ?? 0;
+      const gained = end - start;
+      const needed = Math.max(0, line.quantity - gained);
+      return { ...line, quantity: needed };
+    })
+    .filter((line) => line.quantity > 0);
+}
+
+async function findInventoryAdjustmentReasonId(): Promise<number> {
+  const configured = Number(process.env.HEARTLAND_RETAIL_ADJUSTMENT_REASON_ID);
+  if (Number.isFinite(configured) && configured > 0) return configured;
+
+  for (const path of [
+    "/reason_codes/inventory_adjustment_reasons?active=true&per_page=50",
+    "/reason_codes/inventory_adjustment_reasons?per_page=50",
+  ]) {
+    try {
+      const { body } = await retailFetch(path);
+      const results =
+        (body as SearchResult<{ id: number; name?: string; description?: string }>).results ?? [];
+      const preferred = results.find((reason) =>
+        /return|refund|correct|count|found|overage|website/i.test(
+          `${reason.name ?? ""} ${reason.description ?? ""}`
+        )
+      );
+      if (preferred?.id) return preferred.id;
+      if (results[0]?.id) return results[0].id;
+    } catch (err) {
+      console.warn("Heartland Retail adjustment reason lookup skipped:", err);
+    }
+  }
+  throw new Error("No Heartland inventory adjustment reason is available.");
+}
+
+async function completeInventoryAdjustment(lines: RetailCheckoutLine[]): Promise<number> {
+  const locationId = Number(process.env.HEARTLAND_RETAIL_LOCATION_ID);
+  const reasonId = await findInventoryAdjustmentReasonId();
+  const { res } = await retailFetch("/inventory/adjustment_sets", {
+    method: "POST",
+    body: JSON.stringify({
+      adjustment_reason_id: reasonId,
+      location_id: locationId,
+    }),
+  });
+  const setId = parseLocationId(res.headers.get("location"));
+
+  for (const line of lines) {
+    let unitCost = 0;
+    try {
+      const item = await getItem(line.heartlandItemId);
+      unitCost = Number(item.cost) || 0;
+    } catch {
+      unitCost = 0;
+    }
+    await retailFetch(`/inventory/adjustment_sets/${setId}/lines`, {
+      method: "POST",
+      body: JSON.stringify({
+        item_id: line.heartlandItemId,
+        qty: Math.abs(line.quantity),
+        unit_cost: unitCost,
+      }),
+    });
+  }
+
+  await retailFetch(`/inventory/adjustment_sets/${setId}`, {
+    method: "PUT",
+    body: JSON.stringify({ status: "complete" }),
+  });
+  return setId;
+}
+
 /**
- * Refund path: void leftover unfulfilled sales orders (releases committed qty),
- * then create a completed Return ticket so sold units go back to on-hand.
+ * Refund path: void leftover sales orders (releases committed qty),
+ * create a completed Return for sold units, then adjust on-hand if qty
+ * is still short.
  */
 export async function restockRetailInventory(input: {
   email: string;
   fullName: string;
   lines: RetailCheckoutLine[];
   existingSalesOrderId?: number | null;
-}): Promise<{ returnTicketId: number | null; voidedOrderIds: number[] }> {
+}): Promise<{
+  returnTicketId: number | null;
+  voidedOrderIds: number[];
+  adjustmentSetId: number | null;
+}> {
   const itemIds = new Set(input.lines.map((line) => line.heartlandItemId));
   const voidedOrderIds: number[] = [];
-  const customer = await findCustomerByEmail(input.email);
+  const before = await qtyForLines(input.lines);
+  const customerId = await upsertCustomerByEmail({
+    email: input.email,
+    fullName: input.fullName,
+  });
 
   const candidateIds = new Set<number>();
   if (input.existingSalesOrderId) candidateIds.add(input.existingSalesOrderId);
 
-  if (customer) {
-    try {
-      const orders = await listCustomerSalesOrders(customer.id);
-      for (const order of orders) {
-        const status = (order.status ?? "").toLowerCase();
-        if (status === "void" || status === "cancelled" || status === "canceled") continue;
-        if (status === "pending" || status === "open" || candidateIds.has(order.id)) {
-          if (candidateIds.has(order.id) || (await salesOrderHasItems(order.id, itemIds))) {
-            candidateIds.add(order.id);
-          }
-        }
+  try {
+    const orders = await listCustomerSalesOrders(customerId);
+    for (const order of orders) {
+      const status = (order.status ?? "").toLowerCase();
+      if (status === "void" || status === "cancelled" || status === "canceled") continue;
+      if (candidateIds.has(order.id) || (await salesOrderHasItems(order.id, itemIds))) {
+        candidateIds.add(order.id);
       }
-    } catch (err) {
-      console.warn("Heartland Retail customer order search skipped:", err);
     }
+  } catch (err) {
+    console.warn("Heartland Retail customer order search skipped:", err);
   }
 
   let parentInvoiceId: number | undefined;
@@ -1051,20 +1157,35 @@ export async function restockRetailInventory(input: {
   }
 
   let returnTicketId: number | null = null;
-  if (customer && input.lines.length > 0) {
+  let afterVoid = await qtyForLines(input.lines);
+  if (shortfallQty(input.lines, before, afterVoid).length > 0 && input.lines.length > 0) {
     try {
       returnTicketId = await createRetailReturn({
-        customerId: customer.id,
+        customerId,
         lines: input.lines,
         parentInvoiceId,
       });
     } catch (err) {
       console.error("Heartland Retail return ticket failed:", err);
-      if (voidedOrderIds.length === 0) throw err;
     }
   }
 
-  return { returnTicketId, voidedOrderIds };
+  let afterReturn = await qtyForLines(input.lines);
+  const stillShort = shortfallQty(input.lines, before, afterReturn);
+  let adjustmentSetId: number | null = null;
+  if (stillShort.length > 0) {
+    adjustmentSetId = await completeInventoryAdjustment(stillShort);
+    afterReturn = await qtyForLines(input.lines);
+  }
+
+  const remaining = shortfallQty(input.lines, before, afterReturn);
+  if (remaining.length > 0) {
+    throw new Error(
+      `Heartland qty did not come back for item ${remaining.map((line) => line.heartlandItemId).join(", ")}.`
+    );
+  }
+
+  return { returnTicketId, voidedOrderIds, adjustmentSetId };
 }
 
 export interface RetailCheckoutLine {

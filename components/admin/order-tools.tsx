@@ -9,6 +9,7 @@ import {
   buyOrderShippingLabel,
   quoteOrderShipping,
   refundOrder,
+  restockOrderInventory,
   saveOrderTracking,
 } from "@/app/admin/actions";
 import type { Order } from "@/lib/types";
@@ -69,26 +70,46 @@ export function OrderTools({
                 ? ` on ${new Date(order.refunded_at).toLocaleDateString()}`
                 : " This card has already been refunded."}
             </p>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending}
+              onClick={() => run(() => restockOrderInventory(order.id))}
+              className="rounded-none tracking-[0.12em] uppercase text-xs"
+            >
+              Put stock back
+            </Button>
           </div>
         ) : (
-          <Button
-            type="button"
-            variant="outline"
-            disabled={pending || !order.heartland_transaction_id}
-            onClick={() => {
-              if (
-                !confirm(
-                  "Refund the card and create a Heartland return so this item goes back into inventory?"
-                )
-              ) {
-                return;
-              }
-              run(() => refundOrder(order.id));
-            }}
-            className="rounded-none tracking-[0.12em] uppercase text-xs"
-          >
-            Refund card
-          </Button>
+          <div className="space-y-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending || !order.heartland_transaction_id}
+              onClick={() => {
+                if (
+                  !confirm(
+                    "Refund the card and create a Heartland return so this item goes back into inventory?"
+                  )
+                ) {
+                  return;
+                }
+                run(() => refundOrder(order.id));
+              }}
+              className="rounded-none tracking-[0.12em] uppercase text-xs"
+            >
+              Refund card
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending}
+              onClick={() => run(() => restockOrderInventory(order.id))}
+              className="rounded-none tracking-[0.12em] uppercase text-xs"
+            >
+              Put stock back
+            </Button>
+          </div>
         )}
       </div>
 
