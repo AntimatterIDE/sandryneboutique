@@ -94,7 +94,7 @@ export function OrderTools({
         <h3 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground mb-2">
           Fulfillment
         </h3>
-        <div className="space-y-2">
+        <div className="space-y-2 max-h-[min(32rem,70vh)] overflow-y-auto pr-1">
           {labelsEnabled ? (
             <>
               <Button

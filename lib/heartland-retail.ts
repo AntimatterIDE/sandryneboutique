@@ -583,9 +583,17 @@ export async function upsertCustomerByEmail(input: {
   });
 }
 
+function retailCountry(country: string): string {
+  const trimmed = country.trim();
+  if (/^(united states|usa|us)$/i.test(trimmed)) return "US";
+  return trimmed.length === 2 ? trimmed.toUpperCase() : trimmed;
+}
+
 export async function createCustomerAddress(
   customerId: number,
   address: {
+    first_name?: string;
+    last_name?: string;
     address_1: string;
     address_2?: string | null;
     city: string;
@@ -594,18 +602,30 @@ export async function createCustomerAddress(
     country: string;
   }
 ): Promise<number> {
+  const payload = {
+    first_name: address.first_name || "Customer",
+    last_name: address.last_name || "Web",
+    line_1: address.address_1,
+    line_2: address.address_2 || null,
+    city: address.city,
+    state: address.state,
+    postal_code: address.zip,
+    country: retailCountry(address.country),
+  };
+
   const { res } = await retailFetch(`/customers/${customerId}/addresses`, {
     method: "POST",
-    body: JSON.stringify({
-      address_1: address.address_1,
-      address_2: address.address_2 || null,
-      city: address.city,
-      state: address.state,
-      zip: address.zip,
-      country: address.country,
-    }),
+    body: JSON.stringify(payload),
   });
-  return parseLocationId(res.headers.get("location"));
+  const joinId = parseLocationId(res.headers.get("location"));
+
+  try {
+    const { body } = await retailFetch(`/customers/${customerId}/addresses/${joinId}`);
+    const record = body as { id?: number; address_id?: number };
+    return record.address_id ?? record.id ?? joinId;
+  } catch {
+    return joinId;
+  }
 }
 
 export async function createSalesOrder(input: {
@@ -613,6 +633,8 @@ export async function createSalesOrder(input: {
   station_id: number;
   source_location_id: number;
   shipping_charge?: number;
+  shipping_address_id?: number;
+  billing_address_id?: number;
 }): Promise<number> {
   try {
     const { res } = await retailFetch("/sales/orders", {
@@ -621,12 +643,13 @@ export async function createSalesOrder(input: {
     });
     return parseLocationId(res.headers.get("location"));
   } catch (err) {
-    if (input.shipping_charge == null || input.shipping_charge === 0) throw err;
-    const { shipping_charge, ...withoutShipping } = input;
+    const { shipping_charge, shipping_address_id, billing_address_id, ...base } = input;
     void shipping_charge;
+    void shipping_address_id;
+    void billing_address_id;
     const { res } = await retailFetch("/sales/orders", {
       method: "POST",
-      body: JSON.stringify(withoutShipping),
+      body: JSON.stringify(base),
     });
     return parseLocationId(res.headers.get("location"));
   }
@@ -673,9 +696,26 @@ export async function addOrderPayment(
       ...(input.reference ? { custom: { portico_transaction_id: input.reference } } : {}),
     },
     {
+      type: "Payments::CustomPayment",
       deposit: true,
       amount,
       payment_type_id: input.payment_type_id,
+    },
+    {
+      deposit: true,
+      amount,
+      payment_type_id: input.payment_type_id,
+    },
+    {
+      type: "ExternalPayment",
+      deposit: true,
+      amount,
+      ...(input.reference ? { reference: input.reference } : {}),
+    },
+    {
+      type: "CashPayment",
+      deposit: true,
+      amount,
     },
   ];
 
@@ -692,6 +732,89 @@ export async function addOrderPayment(
     }
   }
   throw lastError instanceof Error ? lastError : new Error("Retail payment create failed.");
+}
+
+function splitName(fullName: string): { first_name: string; last_name: string } {
+  const parts = fullName.trim().split(/\s+/);
+  return {
+    first_name: parts[0] || "Customer",
+    last_name: parts.slice(1).join(" ") || "Web",
+  };
+}
+
+async function attachSalesOrderAddresses(
+  orderId: number,
+  customerId: number,
+  addressId: number,
+  shipping: {
+    line1: string;
+    line2?: string | null;
+    city: string;
+    state: string;
+    postal_code: string;
+    country: string;
+    fullName: string;
+  }
+): Promise<void> {
+  const names = splitName(shipping.fullName);
+  const addressBody = {
+    first_name: names.first_name,
+    last_name: names.last_name,
+    line_1: shipping.line1,
+    line_2: shipping.line2 || null,
+    city: shipping.city,
+    state: shipping.state,
+    postal_code: shipping.postal_code,
+    country: retailCountry(shipping.country),
+  };
+
+  try {
+    await retailFetch(`/customers/${customerId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        address_id: addressId,
+        shipping_address_id: addressId,
+        billing_address_id: addressId,
+      }),
+    });
+  } catch (err) {
+    console.warn("Heartland Retail customer address defaults skipped:", err);
+  }
+
+  try {
+    await retailFetch(`/sales/orders/${orderId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        shipping_address_id: addressId,
+        billing_address_id: addressId,
+        shipping_address: addressBody,
+        billing_address: addressBody,
+      }),
+    });
+  } catch {
+    await retailFetch(`/sales/orders/${orderId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        shipping_address_id: addressId,
+        billing_address_id: addressId,
+      }),
+    });
+  }
+}
+
+async function getSalesOrderBalance(orderId: number): Promise<number | null> {
+  try {
+    const { body } = await retailFetch(`/sales/orders/${orderId}?_include[]=payments`);
+    const record = body as Record<string, unknown>;
+    for (const key of ["balance", "amount_due", "due", "total"]) {
+      const raw = record[key];
+      const n = typeof raw === "number" ? raw : Number(raw);
+      if (Number.isFinite(n)) return n;
+    }
+  } catch (err) {
+    console.warn("Heartland Retail order balance lookup skipped:", err);
+  }
+  return null;
 }
 
 export async function openSalesOrder(orderId: number): Promise<void> {
@@ -752,6 +875,7 @@ export async function syncPaidOrderToRetail(input: {
     state: string;
     postal_code: string;
     country: string;
+    fullName?: string;
   };
   lines: RetailCheckoutLine[];
   shippingCharge: number;
@@ -773,19 +897,17 @@ export async function syncPaidOrderToRetail(input: {
     fullName: input.fullName,
   });
 
-  try {
-    await createCustomerAddress(customerId, {
-      address_1: input.shipping.line1,
-      address_2: input.shipping.line2,
-      city: input.shipping.city,
-      state: input.shipping.state,
-      zip: input.shipping.postal_code,
-      country: input.shipping.country,
-    });
-  } catch (err) {
-    // Address shape varies by account; order can still proceed.
-    console.warn("Heartland Retail customer address create skipped:", err);
-  }
+  const names = splitName(input.fullName);
+  const addressId = await createCustomerAddress(customerId, {
+    first_name: names.first_name,
+    last_name: names.last_name,
+    address_1: input.shipping.line1,
+    address_2: input.shipping.line2,
+    city: input.shipping.city,
+    state: input.shipping.state,
+    zip: input.shipping.postal_code,
+    country: input.shipping.country,
+  });
 
   let salesOrderId = input.existingSalesOrderId;
   if (!salesOrderId) {
@@ -794,6 +916,8 @@ export async function syncPaidOrderToRetail(input: {
       station_id: stationId,
       source_location_id: locationId,
       shipping_charge: Math.round((input.shippingCharge || 0) * 100) / 100,
+      shipping_address_id: addressId,
+      billing_address_id: addressId,
     });
 
     for (const line of input.lines) {
@@ -806,11 +930,15 @@ export async function syncPaidOrderToRetail(input: {
     }
   }
 
-  // Custom website payments 500 on some Retail accounts. Inventory drops on invoice,
-  // so a payment failure must not block the sale.
+  await attachSalesOrderAddresses(salesOrderId, customerId, addressId, {
+    ...input.shipping,
+    fullName: input.fullName,
+  });
+
+  const due = (await getSalesOrderBalance(salesOrderId)) ?? input.totalAmount;
   try {
     await addOrderPayment(salesOrderId, {
-      amount: input.totalAmount,
+      amount: due > 0 ? due : input.totalAmount,
       payment_type_id: paymentTypeId,
       reference: input.porticoTransactionId,
     });
@@ -818,7 +946,25 @@ export async function syncPaidOrderToRetail(input: {
     console.warn("Heartland Retail payment step skipped:", err);
   }
 
-  await openSalesOrder(salesOrderId);
+  try {
+    await openSalesOrder(salesOrderId);
+  } catch (openErr) {
+    try {
+      const invoiceId = await createInvoice({
+        order_id: salesOrderId,
+        station_id: stationId,
+        source_location_id: locationId,
+      });
+      try {
+        await completeInvoice(invoiceId);
+      } catch (err) {
+        console.warn("Heartland Retail invoice complete step:", err);
+      }
+      return { salesOrderId, invoiceId };
+    } catch {
+      throw openErr;
+    }
+  }
 
   const invoiceId = await createInvoice({
     order_id: salesOrderId,

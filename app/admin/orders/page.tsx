@@ -104,7 +104,7 @@ export default async function AdminOrdersPage({
                   </div>
                 </div>
               </AccordionTrigger>
-              <AccordionContent className="pb-5">
+              <AccordionContent className="pb-8 overflow-visible">
                 <div className="grid gap-6 lg:grid-cols-3">
                   <div className="lg:col-span-2 min-w-0">
                     <h3 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground mb-3">

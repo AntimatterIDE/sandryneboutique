@@ -81,7 +81,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const current = ADMIN_NAV.find((item) => isAdminNavActive(pathname, item));
 
   return (
-    <div className="flex flex-1 min-h-dvh">
+    <div className="flex flex-1 h-dvh max-h-dvh overflow-hidden">
       <aside className="hidden md:flex w-60 shrink-0 flex-col border-r border-foreground/8 bg-card">
         <div className="px-6 py-6 border-b border-foreground/8">
           <Link href="/admin" className="font-serif text-lg tracking-[0.24em] uppercase">
@@ -99,7 +99,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <div className="flex-1 min-w-0 flex flex-col">
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-y-auto">
         <header className="md:hidden sticky top-0 z-30 border-b border-foreground/8 bg-background/95 backdrop-blur-md">
           <div className="flex items-center gap-3 px-4 py-3">
             <Sheet open={open} onOpenChange={setOpen}>
