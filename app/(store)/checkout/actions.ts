@@ -29,9 +29,15 @@ export interface CheckoutLine {
   color: string | null;
 }
 
+export interface CheckoutBilling {
+  line1: string;
+  postal_code: string;
+}
+
 export interface CheckoutInput {
   token: string;
   shipping: ShippingAddress;
+  billing?: CheckoutBilling | null;
   lines: CheckoutLine[];
   discountCode?: string | null;
   captchaToken?: string | null;
@@ -94,6 +100,10 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
 
   const shippingError = validateShipping(input.shipping);
   if (shippingError) return { ok: false, error: shippingError };
+  if (input.billing) {
+    if (!input.billing.line1?.trim()) return { ok: false, error: "Please enter the billing street address on your card." };
+    if (!input.billing.postal_code?.trim()) return { ok: false, error: "Please enter the billing ZIP on your card." };
+  }
 
   if (!Array.isArray(input.lines) || input.lines.length === 0) {
     return { ok: false, error: "Your cart is empty." };
@@ -234,14 +244,23 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
   const shippingCost = discountedSubtotal >= FREE_SHIPPING_THRESHOLD ? 0 : FLAT_SHIPPING_RATE;
   const total = Math.round((discountedSubtotal + shippingCost) * 100) / 100;
 
+  const billingStreet = input.billing?.line1?.trim() || input.shipping.line1;
+  const billingPostal = input.billing?.postal_code?.trim() || input.shipping.postal_code;
+
   const charge = await chargeCard({
     token: input.token,
     amount: total,
-    postalCode: input.shipping.postal_code,
-    streetAddress: input.shipping.line1,
+    postalCode: billingPostal,
+    streetAddress: billingStreet,
+    country: input.shipping.country,
   });
 
   if (!charge.ok) {
+    console.error("Portico charge declined:", {
+      responseCode: charge.responseCode,
+      avsResponseCode: charge.avsResponseCode,
+      cvnResponseCode: charge.cvnResponseCode,
+    });
     return { ok: false, error: charge.message ?? "Payment failed. Please try again." };
   }
 

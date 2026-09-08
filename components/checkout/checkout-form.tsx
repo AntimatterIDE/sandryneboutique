@@ -69,6 +69,9 @@ export function CheckoutForm({
   const { items, clearCart } = useCart();
   const hydrated = useHydrated();
   const [shipping, setShipping] = useState<ShippingAddress>(EMPTY_SHIPPING);
+  const [billingSameAsShipping, setBillingSameAsShipping] = useState(true);
+  const [billingLine1, setBillingLine1] = useState("");
+  const [billingPostal, setBillingPostal] = useState("");
   const [processing, setProcessing] = useState(false);
   const [scriptReady, setScriptReady] = useState(false);
   const [discountInput, setDiscountInput] = useState("");
@@ -78,15 +81,17 @@ export function CheckoutForm({
 
   // Refs so the token-success handler (bound once) always sees current values.
   const shippingRef = useRef(shipping);
+  const billingRef = useRef({ billingSameAsShipping, billingLine1, billingPostal });
   const itemsRef = useRef(items);
   const appliedCodeRef = useRef(appliedCode);
   const captchaTokenRef = useRef(captchaToken);
   useEffect(() => {
     shippingRef.current = shipping;
+    billingRef.current = { billingSameAsShipping, billingLine1, billingPostal };
     itemsRef.current = items;
     appliedCodeRef.current = appliedCode;
     captchaTokenRef.current = captchaToken;
-  }, [shipping, items, appliedCode, captchaToken]);
+  }, [shipping, billingSameAsShipping, billingLine1, billingPostal, items, appliedCode, captchaToken]);
 
   const appliedDiscount = findDiscount(appliedCode);
   const subtotal = cartSubtotal(items);
@@ -117,6 +122,7 @@ export function CheckoutForm({
 
       setProcessing(true);
       try {
+        const billing = billingRef.current;
         const result = await processCheckout({
           token,
           shipping: {
@@ -124,6 +130,9 @@ export function CheckoutForm({
             phone: currentShipping.phone || null,
             line2: currentShipping.line2 || null,
           },
+          billing: billing.billingSameAsShipping
+            ? null
+            : { line1: billing.billingLine1, postal_code: billing.billingPostal },
           lines: currentItems.map((i) => ({
             productId: i.productId,
             variantId: i.variantId ?? null,
@@ -241,6 +250,49 @@ export function CheckoutForm({
                 <Input id="country" autoComplete="country-name" value={shipping.country} onChange={update("country")} className="rounded-none" />
               </div>
             </div>
+          </section>
+
+          <section>
+            <h2 className="text-[11px] tracking-[0.22em] uppercase text-muted-foreground mb-5">
+              Billing
+            </h2>
+            <label className="flex items-start gap-3 text-sm leading-relaxed cursor-pointer">
+              <input
+                type="checkbox"
+                checked={billingSameAsShipping}
+                onChange={(e) => setBillingSameAsShipping(e.target.checked)}
+                className="mt-1 size-4 accent-foreground"
+              />
+              <span>Billing address is the same as shipping</span>
+            </label>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Heartland verifies the ZIP and street on file with the card. If the package ships
+              somewhere else, uncheck this and enter the card statement address.
+            </p>
+            {!billingSameAsShipping && (
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <div className="sm:col-span-2 space-y-1.5">
+                  <Label htmlFor="billing_line1">Billing street</Label>
+                  <Input
+                    id="billing_line1"
+                    autoComplete="billing address-line1"
+                    value={billingLine1}
+                    onChange={(e) => setBillingLine1(e.target.value)}
+                    className="rounded-none"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="billing_postal">Billing ZIP</Label>
+                  <Input
+                    id="billing_postal"
+                    autoComplete="billing postal-code"
+                    value={billingPostal}
+                    onChange={(e) => setBillingPostal(e.target.value)}
+                    className="rounded-none"
+                  />
+                </div>
+              </div>
+            )}
           </section>
 
           <section>

@@ -86,6 +86,17 @@ function ecommerceInfoForToday(date = new Date()): EcommerceInfo {
   return info;
 }
 
+/** Portico AVS uses digits. US ZIP+4 and extra punctuation cause false mismatches. */
+export function sanitizePostalCode(raw: string, country?: string): string {
+  const cleaned = raw.replace(/[^a-zA-Z0-9-]/g, "").slice(0, 10);
+  const isUS = !country || /united states|^usa$|^us$/i.test(country.trim());
+  if (isUS) {
+    const digits = cleaned.replace(/\D/g, "");
+    return digits.slice(0, 5);
+  }
+  return cleaned;
+}
+
 export interface ChargeInput {
   /** Single-use payment token from Heartland hosted fields */
   token: string;
@@ -93,6 +104,7 @@ export interface ChargeInput {
   amount: number;
   postalCode: string;
   streetAddress: string;
+  country?: string;
   invoiceNumber?: string;
   allowDuplicates?: boolean;
 }
@@ -174,8 +186,8 @@ export async function chargeCard(input: ChargeInput): Promise<ChargeResult> {
   card.token = input.token;
 
   const address = new Address();
-  address.postalCode = input.postalCode;
-  address.streetAddress1 = input.streetAddress;
+  address.postalCode = sanitizePostalCode(input.postalCode, input.country);
+  address.streetAddress1 = input.streetAddress.trim();
 
   const invoiceNumber = input.invoiceNumber?.trim() || newInvoiceNumber();
 
@@ -285,6 +297,10 @@ export async function voidTransaction(transactionId: string): Promise<ChargeResu
 }
 
 function declineMessage(code: string | undefined, raw: string | undefined): string {
+  const text = raw?.toUpperCase() ?? "";
+  if (code === "04" || text.includes("AVS") || text.includes("CVV")) {
+    return "The billing ZIP or security code did not match the card. Enter the address on your card statement and try again.";
+  }
   switch (code) {
     case "02":
     case "03":
