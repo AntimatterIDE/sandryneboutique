@@ -818,6 +818,15 @@ export async function updateOrderStatus(
   }
 
   const supabase = await createPrivilegedClient();
+  const { data: existing } = await supabase
+    .from("orders")
+    .select("status, refunded_at, refunded_amount")
+    .eq("id", orderId)
+    .single();
+  if (existing?.refunded_at || existing?.refunded_amount != null || existing?.status === "cancelled") {
+    return { ok: false, message: "This order was refunded and cannot change status." };
+  }
+
   const { error } = await supabase.from("orders").update({ status }).eq("id", orderId);
 
   if (error) {
@@ -836,7 +845,9 @@ export async function refundOrder(orderId: string): Promise<ActionResult> {
   const supabase = await createPrivilegedClient();
   const { data: order, error } = await supabase.from("orders").select("*").eq("id", orderId).single();
   if (error || !order) return { ok: false, message: "Order not found." };
-  if (order.refunded_at) return { ok: false, message: "This order was already refunded." };
+  if (order.refunded_at || order.refunded_amount != null || order.status === "cancelled") {
+    return { ok: false, message: "This order was already refunded." };
+  }
   if (!order.heartland_transaction_id) {
     return { ok: false, message: "No Heartland transaction to refund." };
   }
@@ -848,45 +859,67 @@ export async function refundOrder(orderId: string): Promise<ActionResult> {
     return { ok: false, message: result.message ?? "Refund failed." };
   }
 
+  const items = (order.items ?? []) as import("@/lib/types").OrderItem[];
+  const { salesOrderIdFromRetailError, restockRetailInventory } = await import(
+    "@/lib/heartland-retail"
+  );
   const salesOrderId =
-    order.heartland_sales_order_id ??
-    (await import("@/lib/heartland-retail")).salesOrderIdFromRetailError(order.heartland_sync_error);
-  if (salesOrderId) {
-    try {
-      const { reverseRetailSale } = await import("@/lib/heartland-retail");
-      await reverseRetailSale(salesOrderId);
-    } catch (err) {
-      console.error(`Retail void failed for sales order ${salesOrderId}:`, err);
-    }
+    order.heartland_sales_order_id ?? salesOrderIdFromRetailError(order.heartland_sync_error);
+
+  try {
+    await restockRetailInventory({
+      email: order.email,
+      fullName: (order.shipping_address as { full_name?: string } | null)?.full_name || "Customer",
+      existingSalesOrderId: salesOrderId,
+      lines: items
+        .filter((item) => item.heartland_item_id != null)
+        .map((item) => ({
+          heartlandItemId: item.heartland_item_id as number,
+          quantity: item.quantity,
+          unitPrice: Number(item.price),
+        })),
+    });
+  } catch (err) {
+    console.error(`Heartland Retail return failed for order ${orderId}:`, err);
   }
 
   try {
-    const { restoreSiteInventory } = await import("@/lib/order-inventory");
-    await restoreSiteInventory(supabase, (order.items ?? []) as import("@/lib/types").OrderItem[]);
+    const { mirrorRetailQtyToSite, restoreSiteInventory } = await import("@/lib/order-inventory");
+    try {
+      await mirrorRetailQtyToSite(supabase, items);
+    } catch (mirrorErr) {
+      console.error(`Retail qty mirror failed for order ${orderId}:`, mirrorErr);
+      await restoreSiteInventory(supabase, items);
+    }
   } catch (err) {
     console.error(`Site inventory restore failed for order ${orderId}:`, err);
   }
 
-  await supabase
+  const refundedAt = new Date().toISOString();
+  const { error: refundUpdateError } = await supabase
     .from("orders")
     .update({
       status: "cancelled",
       refunded_amount: remaining,
-      refunded_at: new Date().toISOString(),
+      refunded_at: refundedAt,
       heartland_sync_status: "synced",
       heartland_sync_error: null,
     })
     .eq("id", orderId);
+  if (refundUpdateError) {
+    console.error("Refund columns update failed; saving cancelled status only:", refundUpdateError);
+    await supabase.from("orders").update({ status: "cancelled" }).eq("id", orderId);
+  }
 
   revalidatePath("/admin/orders");
   revalidatePath("/shop");
-  const items = (order.items ?? []) as { slug?: string | null }[];
   for (const item of items) {
     if (item.slug) revalidatePath(`/products/${item.slug}`);
   }
   return {
     ok: true,
-    message: "Refund sent. Inventory is being added back on the site and in Heartland Retail.",
+    message:
+      "Card refunded. Heartland recorded a return and inventory was restocked on the site and in Retail.",
   };
 }
 

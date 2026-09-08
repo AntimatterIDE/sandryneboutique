@@ -96,7 +96,9 @@ export default async function AdminOrdersPage({
                       variant="secondary"
                       className="rounded-none text-[10px] uppercase tracking-[0.14em]"
                     >
-                      {order.status}
+                      {order.refunded_at || order.refunded_amount != null || order.status === "cancelled"
+                        ? "Refunded"
+                        : order.status}
                     </Badge>
                     <span className="text-sm font-medium tabular-nums sm:ml-auto">
                       {formatPrice(order.total_amount)}
@@ -164,7 +166,17 @@ export default async function AdminOrdersPage({
                       <h3 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground mb-2">
                         Status
                       </h3>
-                      <OrderStatusSelect orderId={order.id} status={order.status} />
+                      <OrderStatusSelect
+                        orderId={order.id}
+                        status={
+                          order.refunded_at || order.refunded_amount != null
+                            ? "cancelled"
+                            : order.status
+                        }
+                        locked={Boolean(
+                          order.refunded_at || order.refunded_amount != null || order.status === "cancelled"
+                        )}
+                      />
                     </div>
                     <div>
                       <h3 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground mb-2">

@@ -23,9 +23,11 @@ const STATUSES: { value: OrderStatus; label: string }[] = [
 export function OrderStatusSelect({
   orderId,
   status,
+  locked = false,
 }: {
   orderId: string;
   status: OrderStatus;
+  locked?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -43,7 +45,7 @@ export function OrderStatusSelect({
   };
 
   return (
-    <Select value={status} onValueChange={handleChange} disabled={pending}>
+    <Select value={status} onValueChange={handleChange} disabled={pending || locked}>
       <SelectTrigger size="sm" className="rounded-none w-32 text-xs">
         <SelectValue />
       </SelectTrigger>

@@ -25,6 +25,7 @@ export function OrderTools({
   const [tracking, setTracking] = useState(order.tracking_number ?? "");
   const [carrier, setCarrier] = useState(order.tracking_carrier ?? "UPS");
   const [rates, setRates] = useState<{ code: string; name: string; amount: string }[]>([]);
+  const [refundedLocal, setRefundedLocal] = useState(false);
 
   const run = (fn: () => Promise<{ ok: boolean; message: string; labelUrl?: string; rates?: { code: string; name: string; amount: string }[] }>) => {
     startTransition(async () => {
@@ -33,14 +34,20 @@ export function OrderTools({
         toast.success(result.message);
         if (result.rates) setRates(result.rates);
         if (result.labelUrl) window.open(result.labelUrl, "_blank", "noopener,noreferrer");
+        if (result.message.toLowerCase().includes("refund")) setRefundedLocal(true);
       } else {
         toast.error(result.message);
+        if (result.message.toLowerCase().includes("already refunded")) setRefundedLocal(true);
       }
       router.refresh();
     });
   };
 
-  const refunded = Boolean(order.refunded_at);
+  const refunded =
+    refundedLocal ||
+    Boolean(order.refunded_at) ||
+    order.refunded_amount != null ||
+    order.status === "cancelled";
   const shipped = order.status === "shipped" || Boolean(order.tracking_number);
 
   return (
@@ -50,10 +57,22 @@ export function OrderTools({
           Refund
         </h3>
         {refunded ? (
-          <p className="text-xs text-muted-foreground">
-            Refunded {order.refunded_amount != null ? `$${Number(order.refunded_amount).toFixed(2)}` : ""}{" "}
-            {order.refunded_at ? `on ${new Date(order.refunded_at).toLocaleDateString()}` : ""}
-          </p>
+          <div className="space-y-1">
+            <Button
+              type="button"
+              variant="outline"
+              disabled
+              className="rounded-none tracking-[0.12em] uppercase text-xs"
+            >
+              Refunded
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              {order.refunded_amount != null ? `$${Number(order.refunded_amount).toFixed(2)}` : ""}
+              {order.refunded_at
+                ? ` on ${new Date(order.refunded_at).toLocaleDateString()}`
+                : " This card has already been refunded."}
+            </p>
+          </div>
         ) : (
           <Button
             type="button"
@@ -62,7 +81,7 @@ export function OrderTools({
             onClick={() => {
               if (
                 !confirm(
-                  "Refund this charge to the card and add the item back to inventory on the site and in Heartland?"
+                  "Refund the card and create a Heartland return so this item goes back into inventory?"
                 )
               ) {
                 return;

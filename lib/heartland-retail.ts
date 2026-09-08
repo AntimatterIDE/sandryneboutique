@@ -862,13 +862,14 @@ export async function voidInvoice(invoiceId: number): Promise<void> {
   });
 }
 
-/** Void invoices (if any) then the sales order so Retail inventory comes back. */
-export async function reverseRetailSale(salesOrderId: number): Promise<void> {
+async function voidInvoicesForOrder(salesOrderId: number): Promise<number | null> {
+  let firstInvoiceId: number | null = null;
   try {
     const filter = encodeURIComponent(JSON.stringify({ order_id: salesOrderId }));
     const { body } = await retailFetch(`/sales/invoices?_filter[]=${filter}&per_page=20`);
-    const result = body as SearchResult<{ id: number }>;
+    const result = body as SearchResult<{ id: number; status?: string }>;
     for (const invoice of result.results ?? []) {
+      firstInvoiceId = firstInvoiceId ?? invoice.id;
       try {
         await voidInvoice(invoice.id);
       } catch (err) {
@@ -878,7 +879,12 @@ export async function reverseRetailSale(salesOrderId: number): Promise<void> {
   } catch (err) {
     console.warn("Heartland Retail invoice lookup for void skipped:", err);
   }
+  return firstInvoiceId;
+}
 
+/** Cancel an unfulfilled sales order (releases committed qty). This is not a return. */
+export async function reverseRetailSale(salesOrderId: number): Promise<void> {
+  await voidInvoicesForOrder(salesOrderId);
   try {
     await voidSalesOrder(salesOrderId);
   } catch (err) {
@@ -886,6 +892,179 @@ export async function reverseRetailSale(salesOrderId: number): Promise<void> {
     if (!/void|already|status/i.test(message)) throw err;
     console.warn("Heartland Retail sales order void skipped:", err);
   }
+}
+
+async function listCustomerSalesOrders(customerId: number): Promise<{ id: number; status?: string }[]> {
+  const filter = encodeURIComponent(JSON.stringify({ customer_id: customerId }));
+  const { body } = await retailFetch(`/sales/orders?_filter[]=${filter}&per_page=50`);
+  const result = body as SearchResult<{ id: number; status?: string }>;
+  return result.results ?? [];
+}
+
+async function salesOrderHasItems(orderId: number, itemIds: Set<number>): Promise<boolean> {
+  try {
+    const { body } = await retailFetch(`/sales/orders/${orderId}/lines?per_page=50`);
+    const result = body as SearchResult<{ item_id?: number }>;
+    return (result.results ?? []).some((line) => typeof line.item_id === "number" && itemIds.has(line.item_id));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Heartland Return ticket: negative qty + complete, which restocks on-hand.
+ * Completing a return is different from voiding a pending sales order.
+ */
+export async function createRetailReturn(input: {
+  customerId: number;
+  lines: RetailCheckoutLine[];
+  parentInvoiceId?: number;
+}): Promise<number> {
+  const stationId = Number(process.env.HEARTLAND_RETAIL_STATION_ID);
+  const locationId = Number(process.env.HEARTLAND_RETAIL_LOCATION_ID);
+
+  const createAttempts: Record<string, unknown>[] = [
+    {
+      type: "Return",
+      station_id: stationId,
+      source_location_id: locationId,
+      customer_id: input.customerId,
+      affect_inventory: true,
+      ...(input.parentInvoiceId ? { parent_transaction_id: input.parentInvoiceId } : {}),
+    },
+    {
+      type: "Return",
+      station_id: stationId,
+      source_location_id: locationId,
+      customer_id: input.customerId,
+      affect_inventory: true,
+    },
+  ];
+
+  let ticketId: number | null = null;
+  let lastError: unknown;
+  for (const payload of createAttempts) {
+    try {
+      const { res } = await retailFetch("/sales/tickets", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      ticketId = parseLocationId(res.headers.get("location"));
+      break;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  if (ticketId == null) {
+    throw lastError instanceof Error ? lastError : new Error("Could not create Heartland return ticket.");
+  }
+
+  for (const line of input.lines) {
+    const lineBody = {
+      type: "ItemLine",
+      item_id: line.heartlandItemId,
+      qty: -Math.abs(line.quantity),
+      adjusted_unit_price: line.unitPrice,
+    };
+    try {
+      await retailFetch(`/sales/tickets/${ticketId}/item_lines`, {
+        method: "POST",
+        body: JSON.stringify(lineBody),
+      });
+    } catch {
+      await retailFetch(`/sales/tickets/${ticketId}/lines`, {
+        method: "POST",
+        body: JSON.stringify(lineBody),
+      });
+    }
+  }
+
+  try {
+    const { body } = await retailFetch(`/sales/tickets/${ticketId}`);
+    const ticket = body as { balance?: number; total?: number };
+    const due = typeof ticket.balance === "number" ? ticket.balance : ticket.total;
+    if (typeof due === "number" && due !== 0) {
+      await retailFetch(`/sales/tickets/${ticketId}/payments`, {
+        method: "POST",
+        body: JSON.stringify({
+          type: "CashPayment",
+          amount: due,
+        }),
+      });
+    }
+  } catch (err) {
+    console.warn("Heartland Retail return payment skipped:", err);
+  }
+
+  await retailFetch(`/sales/tickets/${ticketId}`, {
+    method: "PUT",
+    body: JSON.stringify({ status: "complete" }),
+  });
+
+  return ticketId;
+}
+
+/**
+ * Refund path: void leftover unfulfilled sales orders (releases committed qty),
+ * then create a completed Return ticket so sold units go back to on-hand.
+ */
+export async function restockRetailInventory(input: {
+  email: string;
+  fullName: string;
+  lines: RetailCheckoutLine[];
+  existingSalesOrderId?: number | null;
+}): Promise<{ returnTicketId: number | null; voidedOrderIds: number[] }> {
+  const itemIds = new Set(input.lines.map((line) => line.heartlandItemId));
+  const voidedOrderIds: number[] = [];
+  const customer = await findCustomerByEmail(input.email);
+
+  const candidateIds = new Set<number>();
+  if (input.existingSalesOrderId) candidateIds.add(input.existingSalesOrderId);
+
+  if (customer) {
+    try {
+      const orders = await listCustomerSalesOrders(customer.id);
+      for (const order of orders) {
+        const status = (order.status ?? "").toLowerCase();
+        if (status === "void" || status === "cancelled" || status === "canceled") continue;
+        if (status === "pending" || status === "open" || candidateIds.has(order.id)) {
+          if (candidateIds.has(order.id) || (await salesOrderHasItems(order.id, itemIds))) {
+            candidateIds.add(order.id);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Heartland Retail customer order search skipped:", err);
+    }
+  }
+
+  let parentInvoiceId: number | undefined;
+  for (const orderId of candidateIds) {
+    try {
+      const invoiceId = await voidInvoicesForOrder(orderId);
+      if (invoiceId) parentInvoiceId = parentInvoiceId ?? invoiceId;
+      await voidSalesOrder(orderId);
+      voidedOrderIds.push(orderId);
+    } catch (err) {
+      console.warn(`Heartland Retail sales order ${orderId} void skipped:`, err);
+    }
+  }
+
+  let returnTicketId: number | null = null;
+  if (customer && input.lines.length > 0) {
+    try {
+      returnTicketId = await createRetailReturn({
+        customerId: customer.id,
+        lines: input.lines,
+        parentInvoiceId,
+      });
+    } catch (err) {
+      console.error("Heartland Retail return ticket failed:", err);
+      if (voidedOrderIds.length === 0) throw err;
+    }
+  }
+
+  return { returnTicketId, voidedOrderIds };
 }
 
 export interface RetailCheckoutLine {
