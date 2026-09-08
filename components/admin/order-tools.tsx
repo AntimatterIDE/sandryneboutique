@@ -42,6 +42,7 @@ export function OrderTools({
   };
 
   const refunded = Boolean(order.refunded_at);
+  const shipped = order.status === "shipped" || Boolean(order.tracking_number);
 
   return (
     <div className="space-y-4">
@@ -95,88 +96,94 @@ export function OrderTools({
           Fulfillment
         </h3>
         <div className="space-y-2 max-h-[min(32rem,70vh)] overflow-y-auto pr-1">
-          {labelsEnabled ? (
+          {shipped ? (
+            <div className="space-y-1">
+              <p className="text-sm font-mono break-all">
+                {order.tracking_number ?? tracking}
+              </p>
+              {order.tracking_carrier || carrier ? (
+                <p className="text-xs text-muted-foreground">
+                  {order.tracking_carrier || carrier}
+                </p>
+              ) : null}
+            </div>
+          ) : (
             <>
+              {labelsEnabled ? (
+                <>
+                  <Button
+                    type="button"
+                    disabled={pending}
+                    onClick={() => run(() => quoteOrderShipping(order.id))}
+                    className="rounded-none tracking-[0.12em] uppercase text-xs w-full"
+                  >
+                    Get UPS rates
+                  </Button>
+                  {rates.map((rate) => (
+                    <Button
+                      key={rate.code}
+                      type="button"
+                      variant="outline"
+                      disabled={pending}
+                      onClick={() => {
+                        if (
+                          !confirm(
+                            `Print UPS ${rate.name} for $${rate.amount}? This bills the boutique UPS account and opens the label.`
+                          )
+                        ) {
+                          return;
+                        }
+                        run(() => buyOrderShippingLabel(order.id, rate.code));
+                      }}
+                      className="rounded-none text-xs w-full justify-between"
+                    >
+                      <span>{rate.name}</span>
+                      <span className="tabular-nums">${rate.amount}</span>
+                    </Button>
+                  ))}
+                </>
+              ) : (
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  Add <code className="text-[10px]">UPS_CLIENT_ID</code>,{" "}
+                  <code className="text-[10px]">UPS_CLIENT_SECRET</code>, and{" "}
+                  <code className="text-[10px]">UPS_ACCOUNT_NUMBER</code> in Vercel. Create an
+                  app at{" "}
+                  <a
+                    href="https://developer.ups.com"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline underline-offset-2"
+                  >
+                    developer.ups.com
+                  </a>{" "}
+                  with Rating + Shipping, then you can quote and print labels here.
+                </p>
+              )}
+              <Input
+                value={carrier}
+                onChange={(e) => setCarrier(e.target.value)}
+                placeholder="Carrier"
+                aria-label="Carrier"
+                className="rounded-none h-9 text-xs"
+              />
+              <Input
+                value={tracking}
+                onChange={(e) => setTracking(e.target.value)}
+                placeholder="Tracking number"
+                aria-label="Tracking number"
+                className="rounded-none h-9 text-xs"
+              />
               <Button
                 type="button"
+                variant="outline"
                 disabled={pending}
-                onClick={() => run(() => quoteOrderShipping(order.id))}
+                onClick={() => run(() => saveOrderTracking(order.id, tracking, carrier))}
                 className="rounded-none tracking-[0.12em] uppercase text-xs w-full"
               >
-                Get UPS rates
+                Save tracking &amp; mark shipped
               </Button>
-              {rates.map((rate) => (
-                <Button
-                  key={rate.code}
-                  type="button"
-                  variant="outline"
-                  disabled={pending}
-                  onClick={() => {
-                    if (
-                      !confirm(
-                        `Print UPS ${rate.name} for $${rate.amount}? This bills the boutique UPS account and opens the label.`
-                      )
-                    ) {
-                      return;
-                    }
-                    run(() => buyOrderShippingLabel(order.id, rate.code));
-                  }}
-                  className="rounded-none text-xs w-full justify-between"
-                >
-                  <span>{rate.name}</span>
-                  <span className="tabular-nums">${rate.amount}</span>
-                </Button>
-              ))}
             </>
-          ) : (
-            <p className="text-[11px] text-muted-foreground leading-relaxed">
-              Add <code className="text-[10px]">UPS_CLIENT_ID</code>,{" "}
-              <code className="text-[10px]">UPS_CLIENT_SECRET</code>, and{" "}
-              <code className="text-[10px]">UPS_ACCOUNT_NUMBER</code> in Vercel. Create an app at{" "}
-              <a
-                href="https://developer.ups.com"
-                target="_blank"
-                rel="noreferrer"
-                className="underline underline-offset-2"
-              >
-                developer.ups.com
-              </a>{" "}
-              with Rating + Shipping, then you can quote and print labels here.
-            </p>
           )}
-          <Input
-            value={carrier}
-            onChange={(e) => setCarrier(e.target.value)}
-            placeholder="Carrier"
-            aria-label="Carrier"
-            className="rounded-none h-9 text-xs"
-          />
-          <Input
-            value={tracking}
-            onChange={(e) => setTracking(e.target.value)}
-            placeholder="Tracking number"
-            aria-label="Tracking number"
-            className="rounded-none h-9 text-xs"
-          />
-          <Button
-            type="button"
-            variant="outline"
-            disabled={pending}
-            onClick={() => run(() => saveOrderTracking(order.id, tracking, carrier))}
-            className="rounded-none tracking-[0.12em] uppercase text-xs w-full"
-          >
-            Save tracking &amp; mark shipped
-          </Button>
-          {order.shipping_label_url ? (
-            <a
-              href={order.shipping_label_url}
-              target="_blank"
-              rel="noreferrer"
-              className="block text-xs underline underline-offset-2"
-            >
-              Open last label
-            </a>
-          ) : null}
         </div>
       </div>
     </div>

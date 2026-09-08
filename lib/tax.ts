@@ -31,14 +31,35 @@ export function shippingForSubtotal(subtotal: number): number {
   return subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : FLAT_SHIPPING_RATE;
 }
 
+export function isAddressQuotable(address: {
+  line1?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+}): boolean {
+  return Boolean(
+    address.line1?.trim() &&
+      address.city?.trim() &&
+      address.state?.trim() &&
+      (address.postal_code ?? "").replace(/\D/g, "").length >= 5 &&
+      address.country?.trim()
+  );
+}
+
 export function checkoutTotals(input: {
   subtotal: number;
   discount?: number;
   state?: string | null;
   postalCode?: string | null;
+  /** Live UPS (or fallback) amount. Omit to use the flat rate. */
+  shippingAmount?: number;
 }): { discountedSubtotal: number; shipping: number; tax: number; total: number } {
   const discountedSubtotal = Math.max(0, Math.round((input.subtotal - (input.discount ?? 0)) * 100) / 100);
-  const shipping = shippingForSubtotal(discountedSubtotal);
+  const shipping =
+    input.shippingAmount != null
+      ? Math.max(0, Math.round(input.shippingAmount * 100) / 100)
+      : shippingForSubtotal(discountedSubtotal);
   const tax = estimateSalesTax({
     taxableAmount: discountedSubtotal + shipping,
     state: input.state,

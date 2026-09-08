@@ -17,7 +17,8 @@ import {
 } from "@/lib/heartland-retail";
 import { consumeCheckoutAttempt, getClientIp } from "@/lib/checkout-velocity";
 import { hcaptchaConfigured, verifyHCaptcha } from "@/lib/hcaptcha";
-import { checkoutTotals } from "@/lib/tax";
+import { checkoutTotals, isAddressQuotable, shippingForSubtotal } from "@/lib/tax";
+import { FLAT_SHIPPING_RATE } from "@/lib/constants";
 import { discountAmount, findDiscount } from "@/lib/discounts";
 import type { OrderItem, Product, ProductVariant, ShippingAddress } from "@/lib/types";
 import { effectivePrice } from "@/lib/types";
@@ -47,6 +48,47 @@ export interface CheckoutInput {
 export type CheckoutResult =
   | { ok: true; orderId: string }
   | { ok: false; error: string };
+
+export type CheckoutShippingQuote =
+  | { ok: true; amount: number; service: string; code: string }
+  | { ok: false; error: string };
+
+export async function quoteCheckoutShipping(shipping: ShippingAddress): Promise<CheckoutShippingQuote> {
+  if (!isAddressQuotable(shipping)) {
+    return { ok: false, error: "Enter a complete shipping address to calculate shipping." };
+  }
+
+  const { shippingLabelsConfigured, quoteCheckoutGroundRate } = await import("@/lib/shipping-label");
+  if (!shippingLabelsConfigured()) {
+    return { ok: true, amount: FLAT_SHIPPING_RATE, service: "Standard", code: "flat" };
+  }
+
+  try {
+    const quote = await quoteCheckoutGroundRate(shipping);
+    return { ok: true, amount: quote.amount, service: quote.name, code: quote.code };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Could not calculate shipping for this address.",
+    };
+  }
+}
+
+async function resolveCheckoutShipping(shipping: ShippingAddress, discountedSubtotal: number): Promise<number> {
+  const fallback = shippingForSubtotal(discountedSubtotal);
+  if (fallback === 0) return 0;
+
+  const { shippingLabelsConfigured, quoteCheckoutGroundRate } = await import("@/lib/shipping-label");
+  if (!shippingLabelsConfigured()) return fallback;
+
+  try {
+    const quote = await quoteCheckoutGroundRate(shipping);
+    return quote.amount;
+  } catch (err) {
+    console.warn("Checkout UPS quote failed; using standard shipping:", err);
+    return fallback;
+  }
+}
 
 function validateShipping(s: ShippingAddress): string | null {
   if (!s.full_name?.trim()) return "Please enter your full name.";
@@ -241,11 +283,14 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
     discount = discountAmount(subtotal, def);
   }
 
-  const { discountedSubtotal, shipping: shippingCost, tax, total } = checkoutTotals({
+  const discountedSubtotal = Math.max(0, Math.round((subtotal - discount) * 100) / 100);
+  const shippingCost = await resolveCheckoutShipping(input.shipping, discountedSubtotal);
+  const { tax, total } = checkoutTotals({
     subtotal,
     discount,
     state: input.shipping.state,
     postalCode: input.shipping.postal_code,
+    shippingAmount: shippingCost,
   });
 
   const billingStreet = input.billing?.line1?.trim() || input.shipping.line1;

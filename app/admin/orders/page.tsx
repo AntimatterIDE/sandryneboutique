@@ -101,6 +101,12 @@ export default async function AdminOrdersPage({
                     <span className="text-sm font-medium tabular-nums sm:ml-auto">
                       {formatPrice(order.total_amount)}
                     </span>
+                    {order.tracking_number ? (
+                      <span className="text-[11px] font-mono text-muted-foreground break-all">
+                        {order.tracking_carrier ? `${order.tracking_carrier} · ` : ""}
+                        {order.tracking_number}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
               </AccordionTrigger>

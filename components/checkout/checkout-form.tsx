@@ -12,14 +12,14 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { TrustBadges } from "@/components/product/trust-badges";
-import { FREE_SHIPPING_THRESHOLD } from "@/lib/constants";
-import { checkoutTotals } from "@/lib/tax";
+import { FLAT_SHIPPING_RATE, FREE_SHIPPING_THRESHOLD } from "@/lib/constants";
+import { checkoutTotals, isAddressQuotable } from "@/lib/tax";
 import { discountAmount, findDiscount } from "@/lib/discounts";
 import { cartLineKey, cartSubtotal, useCart } from "@/lib/store/cart";
 import { useHydrated } from "@/lib/hooks/use-hydrated";
 import type { ShippingAddress } from "@/lib/types";
 import { formatPrice } from "@/lib/types";
-import { processCheckout } from "@/app/(store)/checkout/actions";
+import { processCheckout, quoteCheckoutShipping } from "@/app/(store)/checkout/actions";
 import { HCaptchaField } from "@/components/checkout/hcaptcha-field";
 
 interface TokenSuccessResponse {
@@ -78,6 +78,9 @@ export function CheckoutForm({
   const [discountInput, setDiscountInput] = useState("");
   const [appliedCode, setAppliedCode] = useState<string | null>(null);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [quotedShipping, setQuotedShipping] = useState<number | null>(null);
+  const [shippingService, setShippingService] = useState<string | null>(null);
+  const [quoting, setQuoting] = useState(false);
   const formMounted = useRef(false);
 
   // Refs so the token-success handler (bound once) always sees current values.
@@ -86,23 +89,82 @@ export function CheckoutForm({
   const itemsRef = useRef(items);
   const appliedCodeRef = useRef(appliedCode);
   const captchaTokenRef = useRef(captchaToken);
+  const quotedShippingRef = useRef(quotedShipping);
+  const quotingRef = useRef(quoting);
   useEffect(() => {
     shippingRef.current = shipping;
     billingRef.current = { billingSameAsShipping, billingLine1, billingPostal };
     itemsRef.current = items;
     appliedCodeRef.current = appliedCode;
     captchaTokenRef.current = captchaToken;
-  }, [shipping, billingSameAsShipping, billingLine1, billingPostal, items, appliedCode, captchaToken]);
+    quotedShippingRef.current = quotedShipping;
+    quotingRef.current = quoting;
+  }, [shipping, billingSameAsShipping, billingLine1, billingPostal, items, appliedCode, captchaToken, quotedShipping, quoting]);
 
   const appliedDiscount = findDiscount(appliedCode);
   const subtotal = cartSubtotal(items);
   const discount = appliedDiscount ? discountAmount(subtotal, appliedDiscount) : 0;
+  const discountedSubtotal = Math.max(0, subtotal - discount);
+  const qualifiesFree = discountedSubtotal >= FREE_SHIPPING_THRESHOLD;
+  const addressReady = isAddressQuotable(shipping);
+  const shippingReady = qualifiesFree || quotedShipping != null;
   const { shipping: shippingCost, tax, total } = checkoutTotals({
     subtotal,
     discount,
     state: shipping.state,
     postalCode: shipping.postal_code,
+    shippingAmount: qualifiesFree ? 0 : (quotedShipping ?? 0),
   });
+
+  useEffect(() => {
+    if (qualifiesFree) {
+      setQuotedShipping(0);
+      setShippingService("Free");
+      setQuoting(false);
+      return;
+    }
+    if (!addressReady) {
+      setQuotedShipping(null);
+      setShippingService(null);
+      setQuoting(false);
+      return;
+    }
+
+    let cancelled = false;
+    setQuotedShipping(null);
+    setShippingService(null);
+    setQuoting(true);
+    const timer = window.setTimeout(async () => {
+      const result = await quoteCheckoutShipping({
+        ...shipping,
+        phone: shipping.phone || null,
+        line2: shipping.line2 || null,
+      });
+      if (cancelled) return;
+      if (result.ok) {
+        setQuotedShipping(result.amount);
+        setShippingService(result.service);
+      } else {
+        setQuotedShipping(FLAT_SHIPPING_RATE);
+        setShippingService("Standard");
+      }
+      setQuoting(false);
+    }, 700);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    qualifiesFree,
+    addressReady,
+    shipping.line1,
+    shipping.line2,
+    shipping.city,
+    shipping.state,
+    shipping.postal_code,
+    shipping.country,
+  ]);
 
   const applyDiscount = () => {
     const def = findDiscount(discountInput);
@@ -118,6 +180,19 @@ export function CheckoutForm({
     async (token: string) => {
       const currentShipping = shippingRef.current;
       const currentItems = itemsRef.current;
+
+      const currentDiscount = findDiscount(appliedCodeRef.current);
+      const currentSubtotal = cartSubtotal(currentItems);
+      const currentDiscountAmt = currentDiscount ? discountAmount(currentSubtotal, currentDiscount) : 0;
+      const shipsFree = currentSubtotal - currentDiscountAmt >= FREE_SHIPPING_THRESHOLD;
+      if (quotingRef.current) {
+        toast.error("Hang on — we're calculating shipping for this address.");
+        return;
+      }
+      if (!shipsFree && quotedShippingRef.current == null) {
+        toast.error("Enter a complete shipping address so we can add shipping and tax before payment.");
+        return;
+      }
 
       setProcessing(true);
       try {
@@ -435,29 +510,45 @@ export function CheckoutForm({
                 </div>
               )}
               <div className="flex justify-between">
-                <dt className="text-muted-foreground">Shipping</dt>
-                <dd className="tabular-nums">
-                  {shippingCost === 0 ? "Free" : formatPrice(shippingCost)}
+                <dt className="text-muted-foreground">
+                  Shipping
+                  {shippingService && shippingService !== "Free" && shippingReady && !quoting ? (
+                    <span className="block text-[11px]">{shippingService}</span>
+                  ) : null}
+                </dt>
+                <dd className="tabular-nums text-right">
+                  {quoting
+                    ? "Calculating…"
+                    : !addressReady && !qualifiesFree
+                      ? "Enter address"
+                      : shippingCost === 0
+                        ? "Free"
+                        : formatPrice(shippingCost)}
                 </dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-muted-foreground">Est. tax</dt>
                 <dd className="tabular-nums">
-                  {shipping.state.trim()
-                    ? formatPrice(tax)
-                    : "Enter shipping address"}
+                  {quoting
+                    ? "Calculating…"
+                    : shippingReady && shipping.state.trim()
+                      ? formatPrice(tax)
+                      : "Enter shipping address"}
                 </dd>
               </div>
               <Separator className="my-3" />
               <div className="flex justify-between text-base">
                 <dt className="tracking-[0.14em] uppercase text-xs self-center">Total</dt>
-                <dd className="tabular-nums font-medium">{formatPrice(total)}</dd>
+                <dd className="tabular-nums font-medium">
+                  {quoting || !shippingReady ? "—" : formatPrice(total)}
+                </dd>
               </div>
             </dl>
 
             <p className="mt-6 text-[11px] text-muted-foreground leading-relaxed">
-              Orders over {formatPrice(FREE_SHIPPING_THRESHOLD)} ship free. By placing your
-              order you agree to our{" "}
+              Shipping is quoted from your address as UPS Ground. Orders over{" "}
+              {formatPrice(FREE_SHIPPING_THRESHOLD)} ship free. By placing your order you
+              agree to our{" "}
               <Link href="/policies/terms" className="underline underline-offset-2">
                 terms of service
               </Link>

@@ -61,9 +61,10 @@ function shipperAddress() {
 
 function shipToAddress(shipping: ShippingAddress) {
   const lines = [shipping.line1, shipping.line2].filter(Boolean) as string[];
+  const name = (shipping.full_name.trim() || "Customer").slice(0, 35);
   return {
-    Name: shipping.full_name.slice(0, 35),
-    AttentionName: shipping.full_name.slice(0, 35),
+    Name: name,
+    AttentionName: name,
     Phone: { Number: (shipping.phone || STORE_CONTACT.phoneDisplay).replace(/\D/g, "").slice(-10) },
     Address: {
       AddressLine: lines.slice(0, 2),
@@ -173,6 +174,26 @@ export async function quoteUpsRates(shipping: ShippingAddress): Promise<UpsRate[
     }))
     .filter((row) => row.code)
     .sort((a, b) => Number(a.amount) - Number(b.amount));
+}
+
+/** Standard checkout rate: UPS Ground, or the cheapest quoted service if Ground is unavailable. */
+export async function quoteCheckoutGroundRate(shipping: ShippingAddress): Promise<{
+  amount: number;
+  code: string;
+  name: string;
+}> {
+  const rates = await quoteUpsRates(shipping);
+  const ground = rates.find((row) => row.code === "03") ?? rates[0];
+  if (!ground) throw new Error("UPS could not quote this address.");
+  const amount = Math.round(Number(ground.amount) * 100) / 100;
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new Error("UPS returned an invalid shipping rate.");
+  }
+  return {
+    amount,
+    code: ground.code,
+    name: ground.name.startsWith("UPS") ? ground.name : `UPS ${ground.name}`,
+  };
 }
 
 export async function buyUpsShippingLabel(
