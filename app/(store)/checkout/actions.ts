@@ -4,7 +4,12 @@ import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { supabaseConfigured } from "@/lib/data/products";
-import { chargeCard, heartlandConfigured } from "@/lib/heartland";
+import {
+  chargeCard,
+  heartlandConfigured,
+  heartlandIsCertMode,
+  heartlandKeyMismatchMessage,
+} from "@/lib/heartland";
 import {
   heartlandRetailConfigured,
   syncPaidOrderToRetail,
@@ -50,6 +55,17 @@ function validateShipping(s: ShippingAddress): string | null {
 export async function processCheckout(input: CheckoutInput): Promise<CheckoutResult> {
   if (!heartlandConfigured()) {
     return { ok: false, error: "Payments are not configured yet. Add your Heartland keys to enable checkout." };
+  }
+  const keyMismatch = heartlandKeyMismatchMessage();
+  if (keyMismatch) {
+    return { ok: false, error: keyMismatch };
+  }
+  if (heartlandIsCertMode()) {
+    return {
+      ok: false,
+      error:
+        "This site is still using Heartland sandbox (cert) keys. A live card cannot be charged until both keys are pkapi_prod_ / skapi_prod_ and the site is redeployed.",
+    };
   }
   if (!supabaseConfigured() || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return { ok: false, error: "The store database is not configured yet. Add your Supabase keys to enable checkout." };

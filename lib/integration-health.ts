@@ -1,6 +1,13 @@
 import "server-only";
 
-import { heartlandConfigured, porticoDeveloperId, porticoVersionNumber } from "@/lib/heartland";
+import {
+  heartlandConfigured,
+  heartlandKeyMismatchMessage,
+  heartlandPublicKeyEnv,
+  heartlandSecretKeyEnv,
+  porticoDeveloperId,
+  porticoVersionNumber,
+} from "@/lib/heartland";
 import { heartlandRetailConfigured } from "@/lib/heartland-retail";
 import { hcaptchaConfigured, hcaptchaUsingTestKeys } from "@/lib/hcaptcha";
 
@@ -187,8 +194,11 @@ async function pingRetailLocation(): Promise<HealthCheckItem> {
  */
 export async function getIntegrationHealth(): Promise<IntegrationHealthReport> {
   const publicKey = process.env.NEXT_PUBLIC_HEARTLAND_PUBLIC_KEY;
-  const isCert = publicKey?.includes("_cert_");
-  const isProd = publicKey?.includes("_prod_");
+  const publicEnv = heartlandPublicKeyEnv();
+  const secretEnv = heartlandSecretKeyEnv();
+  const keyMismatch = heartlandKeyMismatchMessage();
+  const isCert = publicEnv === "cert" || secretEnv === "cert";
+  const isProd = publicEnv === "prod" && secretEnv === "prod";
 
   const env: HealthCheckItem[] = [
     envCheck("supabase-url", "Supabase URL", process.env.NEXT_PUBLIC_SUPABASE_URL, {
@@ -234,15 +244,23 @@ export async function getIntegrationHealth(): Promise<IntegrationHealthReport> {
     envCheck("cron-secret", "Cron secret", process.env.CRON_SECRET),
   ];
 
-  if (publicKey && isCert) {
+  if (keyMismatch) {
+    env.push({
+      id: "portico-mode",
+      label: "Portico mode",
+      status: "error",
+      detail: keyMismatch,
+      valuePreview: `${publicEnv}/${secretEnv}`,
+    });
+  } else if (isCert) {
     env.push({
       id: "portico-mode",
       label: "Portico mode",
       status: "warn",
-      detail: "Sandbox (cert) keys — good for testing, not live cards.",
+      detail: "Sandbox (cert) keys — live cards cannot be charged.",
       valuePreview: "cert",
     });
-  } else if (publicKey && isProd) {
+  } else if (isProd) {
     env.push({
       id: "portico-mode",
       label: "Portico mode",
@@ -302,7 +320,11 @@ export async function getIntegrationHealth(): Promise<IntegrationHealthReport> {
   if (porticoDeveloperId() !== "002914" || porticoVersionNumber() !== "6401") {
     tips.push("Set HEARTLAND_DEVELOPER_ID=002914 and HEARTLAND_VERSION_NUMBER=6401 (assigned for Sandryne Boutique).");
   }
-  if (isCert) {
+  if (keyMismatch) {
+    tips.push(
+      "Public and secret Portico keys are from different environments. Update both to pkapi_prod_ / skapi_prod_ and redeploy before charging a live card."
+    );
+  } else if (isCert) {
     tips.push(
       "Use Admin → Certification on the Vercel staging URL to run the Secure Submit script. Do not use public checkout — that would decrement live Retail stock."
     );

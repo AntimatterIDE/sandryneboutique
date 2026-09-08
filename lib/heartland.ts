@@ -12,10 +12,35 @@ export function heartlandConfigured(): boolean {
   return Boolean(process.env.HEARTLAND_SECRET_KEY);
 }
 
+export type HeartlandKeyEnv = "cert" | "prod" | "unknown";
+
+export function heartlandKeyEnv(key: string | undefined): HeartlandKeyEnv {
+  const value = key ?? "";
+  if (value.includes("_cert_")) return "cert";
+  if (value.includes("_prod_")) return "prod";
+  return "unknown";
+}
+
+export function heartlandPublicKeyEnv(): HeartlandKeyEnv {
+  return heartlandKeyEnv(process.env.NEXT_PUBLIC_HEARTLAND_PUBLIC_KEY);
+}
+
+export function heartlandSecretKeyEnv(): HeartlandKeyEnv {
+  return heartlandKeyEnv(process.env.HEARTLAND_SECRET_KEY);
+}
+
 export function heartlandIsCertMode(): boolean {
-  const publicKey = process.env.NEXT_PUBLIC_HEARTLAND_PUBLIC_KEY ?? "";
-  const secretKey = process.env.HEARTLAND_SECRET_KEY ?? "";
-  return publicKey.includes("_cert_") || secretKey.includes("_cert_");
+  return heartlandPublicKeyEnv() === "cert" || heartlandSecretKeyEnv() === "cert";
+}
+
+/** Public and secret keys must be the same environment or Portico throws. */
+export function heartlandKeyMismatchMessage(): string | null {
+  const publicEnv = heartlandPublicKeyEnv();
+  const secretEnv = heartlandSecretKeyEnv();
+  if (publicEnv === "unknown" || secretEnv === "unknown" || publicEnv === secretEnv) {
+    return null;
+  }
+  return `Heartland public key is ${publicEnv} but the secret key is ${secretEnv}. Both must be pkapi_prod_ / skapi_prod_ to charge a live card.`;
 }
 
 /** Assigned for Sandryne Boutique. Treat Heartland placeholders as unset. */
@@ -101,10 +126,39 @@ function gatewayResult(
   };
 }
 
+function sanitizeGatewayMessage(raw: string): string {
+  return raw
+    .replace(/skapi_[A-Za-z0-9_]+/g, "[secret]")
+    .replace(/pkapi_[A-Za-z0-9_]+/g, "[public]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 180);
+}
+
+function extractGatewayMessage(err: unknown): string | undefined {
+  if (!err || typeof err !== "object") {
+    return typeof err === "string" ? err : undefined;
+  }
+  const record = err as {
+    message?: unknown;
+    responseMessage?: unknown;
+    responseCode?: unknown;
+  };
+  const parts = [record.responseMessage, record.message, record.responseCode]
+    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .map((part) => part.trim());
+  return parts[0];
+}
+
 function gatewayError(err: unknown, fallback: string): ChargeResult {
   console.error("Heartland request failed:", err);
-  const message = err instanceof Error && err.message ? err.message : fallback;
-  return { ok: false, message: fallback, responseCode: message };
+  const extracted = extractGatewayMessage(err);
+  const detail = extracted ? sanitizeGatewayMessage(extracted) : undefined;
+  return {
+    ok: false,
+    message: detail ? `${fallback} (${detail})` : fallback,
+    responseCode: detail ?? fallback,
+  };
 }
 
 export async function chargeCard(input: ChargeInput): Promise<ChargeResult> {
