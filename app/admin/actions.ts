@@ -10,6 +10,8 @@ export interface ActionResult {
   ok: boolean;
   message: string;
   id?: string;
+  labelUrl?: string;
+  rates?: { code: string; name: string; amount: string }[];
 }
 
 export type ProductImageUploadResult =
@@ -863,9 +865,8 @@ export async function retryRetailSync(orderId: string): Promise<ActionResult> {
   const denied = await requireAdmin();
   if (denied) return denied;
 
-  const { heartlandRetailConfigured, syncPaidOrderToRetail } = await import(
-    "@/lib/heartland-retail"
-  );
+  const { heartlandRetailConfigured, salesOrderIdFromRetailError, syncPaidOrderToRetail } =
+    await import("@/lib/heartland-retail");
   if (!heartlandRetailConfigured()) {
     return { ok: false, message: "Heartland Retail is not fully configured." };
   }
@@ -913,6 +914,10 @@ export async function retryRetailSync(orderId: string): Promise<ActionResult> {
       shippingCharge: Number(order.shipping_amount ?? 0),
       totalAmount: Number(order.total_amount),
       porticoTransactionId: order.heartland_transaction_id ?? undefined,
+      existingSalesOrderId:
+        order.heartland_sales_order_id ??
+        salesOrderIdFromRetailError(order.heartland_sync_error) ??
+        undefined,
     });
 
     await supabase
@@ -973,7 +978,30 @@ export async function saveOrderTracking(
   return { ok: true, message: "Order marked shipped with tracking." };
 }
 
-export async function buyOrderShippingLabel(orderId: string): Promise<ActionResult> {
+export async function quoteOrderShipping(orderId: string): Promise<ActionResult> {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  const supabase = await createPrivilegedClient();
+  const { data: order, error } = await supabase.from("orders").select("*").eq("id", orderId).single();
+  if (error || !order) return { ok: false, message: "Order not found." };
+
+  try {
+    const { quoteUpsRates } = await import("@/lib/shipping-label");
+    const rates = await quoteUpsRates(order.shipping_address);
+    return { ok: true, message: "Select a UPS service to print the label.", rates };
+  } catch (err) {
+    return {
+      ok: false,
+      message: err instanceof Error ? err.message : "Could not get UPS rates.",
+    };
+  }
+}
+
+export async function buyOrderShippingLabel(
+  orderId: string,
+  serviceCode = "03"
+): Promise<ActionResult> {
   const denied = await requireAdmin();
   if (denied) return denied;
 
@@ -983,7 +1011,7 @@ export async function buyOrderShippingLabel(orderId: string): Promise<ActionResu
 
   try {
     const { buyUpsShippingLabel } = await import("@/lib/shipping-label");
-    const label = await buyUpsShippingLabel(order.shipping_address);
+    const label = await buyUpsShippingLabel(order.shipping_address, serviceCode);
     await supabase
       .from("orders")
       .update({
@@ -994,7 +1022,11 @@ export async function buyOrderShippingLabel(orderId: string): Promise<ActionResu
       })
       .eq("id", orderId);
     revalidatePath("/admin/orders");
-    return { ok: true, message: `UPS label purchased. Tracking ${label.trackingNumber}` };
+    return {
+      ok: true,
+      message: `UPS billed your account${label.amount ? ` $${label.amount}` : ""}. Tracking ${label.trackingNumber}`,
+      labelUrl: label.labelUrl,
+    };
   } catch (err) {
     return {
       ok: false,

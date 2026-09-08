@@ -735,6 +735,13 @@ export interface RetailCheckoutLine {
  * After Portico charge: create Retail sales order, custom payment, open + invoice
  * so inventory is deducted in Heartland Retail (source of truth).
  */
+export function salesOrderIdFromRetailError(message: string | null | undefined): number | null {
+  const match = message?.match(/\/sales\/orders\/(\d+)/);
+  if (!match) return null;
+  const id = Number(match[1]);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+
 export async function syncPaidOrderToRetail(input: {
   email: string;
   fullName: string;
@@ -750,6 +757,8 @@ export async function syncPaidOrderToRetail(input: {
   shippingCharge: number;
   totalAmount: number;
   porticoTransactionId?: string;
+  /** Resume an order that already has lines (payment previously 500'd). */
+  existingSalesOrderId?: number;
 }): Promise<{ salesOrderId: number; invoiceId: number }> {
   if (!heartlandRetailConfigured()) {
     throw new Error("Heartland Retail is not fully configured.");
@@ -778,27 +787,36 @@ export async function syncPaidOrderToRetail(input: {
     console.warn("Heartland Retail customer address create skipped:", err);
   }
 
-  const salesOrderId = await createSalesOrder({
-    customer_id: customerId,
-    station_id: stationId,
-    source_location_id: locationId,
-    shipping_charge: Math.round((input.shippingCharge || 0) * 100) / 100,
-  });
-
-  for (const line of input.lines) {
-    const lineId = await addOrderLine(salesOrderId, {
-      item_id: line.heartlandItemId,
-      qty: line.quantity,
-      adjusted_unit_price: line.unitPrice,
+  let salesOrderId = input.existingSalesOrderId;
+  if (!salesOrderId) {
+    salesOrderId = await createSalesOrder({
+      customer_id: customerId,
+      station_id: stationId,
+      source_location_id: locationId,
+      shipping_charge: Math.round((input.shippingCharge || 0) * 100) / 100,
     });
-    await distributeOrderLine(salesOrderId, lineId, locationId);
+
+    for (const line of input.lines) {
+      const lineId = await addOrderLine(salesOrderId, {
+        item_id: line.heartlandItemId,
+        qty: line.quantity,
+        adjusted_unit_price: line.unitPrice,
+      });
+      await distributeOrderLine(salesOrderId, lineId, locationId);
+    }
   }
 
-  await addOrderPayment(salesOrderId, {
-    amount: input.totalAmount,
-    payment_type_id: paymentTypeId,
-    reference: input.porticoTransactionId,
-  });
+  // Custom website payments 500 on some Retail accounts. Inventory drops on invoice,
+  // so a payment failure must not block the sale.
+  try {
+    await addOrderPayment(salesOrderId, {
+      amount: input.totalAmount,
+      payment_type_id: paymentTypeId,
+      reference: input.porticoTransactionId,
+    });
+  } catch (err) {
+    console.warn("Heartland Retail payment step skipped:", err);
+  }
 
   await openSalesOrder(salesOrderId);
 

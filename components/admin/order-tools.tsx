@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   buyOrderShippingLabel,
+  quoteOrderShipping,
   refundOrder,
   retryRetailSync,
   saveOrderTracking,
@@ -24,12 +25,18 @@ export function OrderTools({
   const [pending, startTransition] = useTransition();
   const [tracking, setTracking] = useState(order.tracking_number ?? "");
   const [carrier, setCarrier] = useState(order.tracking_carrier ?? "UPS");
+  const [rates, setRates] = useState<{ code: string; name: string; amount: string }[]>([]);
 
-  const run = (fn: () => Promise<{ ok: boolean; message: string }>) => {
+  const run = (fn: () => Promise<{ ok: boolean; message: string; labelUrl?: string; rates?: { code: string; name: string; amount: string }[] }>) => {
     startTransition(async () => {
       const result = await fn();
-      if (result.ok) toast.success(result.message);
-      else toast.error(result.message);
+      if (result.ok) {
+        toast.success(result.message);
+        if (result.rates) setRates(result.rates);
+        if (result.labelUrl) window.open(result.labelUrl, "_blank", "noopener,noreferrer");
+      } else {
+        toast.error(result.message);
+      }
       router.refresh();
     });
   };
@@ -63,14 +70,14 @@ export function OrderTools({
         )}
       </div>
 
-      <div>
-        <h3 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground mb-2">
-          Heartland Retail
-        </h3>
-        {order.heartland_sync_status === "failed" && order.heartland_sync_error ? (
-          <p className="text-xs text-destructive mb-2 break-words">{order.heartland_sync_error}</p>
-        ) : null}
-        {order.heartland_sync_status !== "synced" ? (
+      {order.heartland_sync_status && order.heartland_sync_status !== "synced" ? (
+        <div>
+          <h3 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground mb-2">
+            Heartland Retail
+          </h3>
+          {order.heartland_sync_error ? (
+            <p className="text-xs text-destructive mb-2 break-words">{order.heartland_sync_error}</p>
+          ) : null}
           <Button
             type="button"
             variant="outline"
@@ -78,18 +85,65 @@ export function OrderTools({
             onClick={() => run(() => retryRetailSync(order.id))}
             className="rounded-none tracking-[0.12em] uppercase text-xs"
           >
-            Retry inventory sync
+            Finish inventory sync
           </Button>
-        ) : (
-          <p className="text-xs text-muted-foreground">Synced. Stock should be reduced in Retail.</p>
-        )}
-      </div>
+        </div>
+      ) : null}
 
       <div>
         <h3 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground mb-2">
           Fulfillment
         </h3>
         <div className="space-y-2">
+          {labelsEnabled ? (
+            <>
+              <Button
+                type="button"
+                disabled={pending}
+                onClick={() => run(() => quoteOrderShipping(order.id))}
+                className="rounded-none tracking-[0.12em] uppercase text-xs w-full"
+              >
+                Get UPS rates
+              </Button>
+              {rates.map((rate) => (
+                <Button
+                  key={rate.code}
+                  type="button"
+                  variant="outline"
+                  disabled={pending}
+                  onClick={() => {
+                    if (
+                      !confirm(
+                        `Print UPS ${rate.name} for $${rate.amount}? This bills the boutique UPS account and opens the label.`
+                      )
+                    ) {
+                      return;
+                    }
+                    run(() => buyOrderShippingLabel(order.id, rate.code));
+                  }}
+                  className="rounded-none text-xs w-full justify-between"
+                >
+                  <span>{rate.name}</span>
+                  <span className="tabular-nums">${rate.amount}</span>
+                </Button>
+              ))}
+            </>
+          ) : (
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              Add <code className="text-[10px]">UPS_CLIENT_ID</code>,{" "}
+              <code className="text-[10px]">UPS_CLIENT_SECRET</code>, and{" "}
+              <code className="text-[10px]">UPS_ACCOUNT_NUMBER</code> in Vercel. Create an app at{" "}
+              <a
+                href="https://developer.ups.com"
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2"
+              >
+                developer.ups.com
+              </a>{" "}
+              with Rating + Shipping, then you can quote and print labels here.
+            </p>
+          )}
           <Input
             value={carrier}
             onChange={(e) => setCarrier(e.target.value)}
@@ -113,21 +167,6 @@ export function OrderTools({
           >
             Save tracking &amp; mark shipped
           </Button>
-          {labelsEnabled ? (
-            <Button
-              type="button"
-              disabled={pending}
-              onClick={() => run(() => buyOrderShippingLabel(order.id))}
-              className="rounded-none tracking-[0.12em] uppercase text-xs w-full"
-            >
-              Buy UPS label
-            </Button>
-          ) : (
-            <p className="text-[11px] text-muted-foreground leading-relaxed">
-              Add <code className="text-[10px]">EASYPOST_API_KEY</code> in Vercel to buy UPS
-              labels here. Until then, create the label in UPS and paste the tracking number.
-            </p>
-          )}
           {order.shipping_label_url ? (
             <a
               href={order.shipping_label_url}
@@ -135,7 +174,7 @@ export function OrderTools({
               rel="noreferrer"
               className="block text-xs underline underline-offset-2"
             >
-              Open purchased label
+              Open last label
             </a>
           ) : null}
         </div>
