@@ -14,7 +14,7 @@ import { shippingLabelsConfigured } from "@/lib/shipping-label";
 import { createPrivilegedClient } from "@/lib/supabase/server";
 import { supabaseConfigured } from "@/lib/data/products";
 import type { Order, OrderStatus } from "@/lib/types";
-import { formatPrice, isOrderReturned, orderItemNumber } from "@/lib/types";
+import { formatPrice, isOrderReturned, orderItemNumber, orderMoneyBreakdown } from "@/lib/types";
 
 export const metadata: Metadata = {
   title: "Orders",
@@ -90,7 +90,9 @@ export default async function AdminOrdersPage({
           type="multiple"
           className="border border-foreground/10 divide-y divide-foreground/8"
         >
-          {orders.map((order) => (
+          {orders.map((order) => {
+            const money = orderMoneyBreakdown(order);
+            return (
             <AccordionItem key={order.id} value={order.id} className="border-b-0 px-3 sm:px-5">
               <AccordionTrigger className="hover:no-underline py-4 items-start">
                 <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-6 sm:gap-y-2 pr-2 sm:pr-4 text-left w-full min-w-0">
@@ -163,20 +165,16 @@ export default async function AdminOrdersPage({
                       <li className="flex justify-between text-sm pt-2 border-t border-foreground/8">
                         <span className="text-muted-foreground">Shipping</span>
                         <span className="tabular-nums">
-                          {Number(order.shipping_amount ?? 0) === 0
-                            ? "Free"
-                            : formatPrice(Number(order.shipping_amount))}
+                          {money.shipping === 0 ? "Free" : formatPrice(money.shipping)}
                         </span>
                       </li>
                       <li className="flex justify-between text-sm">
                         <span className="text-muted-foreground">Tax</span>
-                        <span className="tabular-nums">
-                          {formatPrice(Number(order.tax_amount ?? 0))}
-                        </span>
+                        <span className="tabular-nums">{formatPrice(money.tax)}</span>
                       </li>
                       <li className="flex justify-between text-sm font-medium pt-2 border-t border-foreground/8">
                         <span>Charged total</span>
-                        <span className="tabular-nums">{formatPrice(order.total_amount)}</span>
+                        <span className="tabular-nums">{formatPrice(money.total)}</span>
                       </li>
                     </ul>
 
@@ -244,7 +242,8 @@ export default async function AdminOrdersPage({
                 </div>
               </AccordionContent>
             </AccordionItem>
-          ))}
+            );
+          })}
         </Accordion>
       )}
     </div>

@@ -174,6 +174,23 @@ export function orderItemNumber(
   return null;
 }
 
+export function orderMoneyBreakdown(order: Pick<Order, "items" | "total_amount" | "tax_amount" | "shipping_amount">): {
+  merchandise: number;
+  shipping: number;
+  tax: number;
+  total: number;
+} {
+  const merchandise = Math.round(
+    order.items.reduce((sum, item) => sum + Number(item.price) * Number(item.quantity), 0) * 100
+  ) / 100;
+  const tax = Math.round(Number(order.tax_amount ?? 0) * 100) / 100;
+  const total = Math.round(Number(order.total_amount) * 100) / 100;
+  const storedShipping = order.shipping_amount == null ? null : Math.round(Number(order.shipping_amount) * 100) / 100;
+  const inferred = Math.max(0, Math.round((total - merchandise - tax) * 100) / 100);
+  const shipping = storedShipping != null && storedShipping > 0 ? storedShipping : inferred;
+  return { merchandise, shipping, tax, total };
+}
+
 /** Effective selling price (sale price when on sale). */
 export function effectivePrice(p: Pick<Product, "price" | "on_sale" | "sale_price">): number {
   return p.on_sale && p.sale_price != null ? p.sale_price : p.price;

@@ -850,9 +850,12 @@ export async function refundOrder(orderId: string): Promise<ActionResult> {
     return { ok: false, message: "No Heartland transaction to refund." };
   }
 
-  const { refundTransaction } = await import("@/lib/heartland");
-  const remaining = Number(order.total_amount) - Number(order.refunded_amount ?? 0);
-  const result = await refundTransaction(order.heartland_transaction_id, remaining);
+  const { returnCardFunds } = await import("@/lib/heartland");
+  const remaining = Math.round((Number(order.total_amount) - Number(order.refunded_amount ?? 0)) * 100) / 100;
+  if (remaining <= 0) {
+    return { ok: false, message: "This order was already refunded." };
+  }
+  const result = await returnCardFunds(order.heartland_transaction_id, remaining);
   if (!result.ok) {
     return { ok: false, message: result.message ?? "Refund failed." };
   }

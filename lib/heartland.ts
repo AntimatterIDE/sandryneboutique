@@ -296,6 +296,50 @@ export async function voidTransaction(transactionId: string): Promise<ChargeResu
   }
 }
 
+function isUnsettledReturnError(result: ChargeResult): boolean {
+  const text = `${result.responseCode ?? ""} ${result.message ?? ""}`.toLowerCase();
+  return (
+    text.includes("exceeds the original settlement") ||
+    text.includes("return amount is zero") ||
+    text.includes("gateway response: 6") ||
+    /\b6\b/.test(result.responseCode ?? "") && text.includes("settlement")
+  );
+}
+
+/**
+ * Same-day pending sales must be reversed or voided. Refund (CreditReturn)
+ * only works after Heartland settles the batch — otherwise Portico returns 6.
+ */
+export async function returnCardFunds(
+  transactionId: string,
+  amount: number
+): Promise<ChargeResult> {
+  const dollars = Math.round(amount * 100) / 100;
+  if (!Number.isFinite(dollars) || dollars <= 0) {
+    return { ok: false, message: "There is no remaining amount to return on this card." };
+  }
+
+  const reversed = await reverseTransaction(transactionId, dollars);
+  if (reversed.ok) return reversed;
+
+  const voided = await voidTransaction(transactionId);
+  if (voided.ok) return voided;
+
+  const refunded = await refundTransaction(transactionId, dollars);
+  if (refunded.ok) return refunded;
+
+  if (isUnsettledReturnError(refunded) || isUnsettledReturnError(reversed)) {
+    return {
+      ok: false,
+      message:
+        "Heartland has not settled this charge yet, and the void/reverse also failed. Wait until the pending TEMP hold posts, then refund, or void it in the Heartland merchant terminal.",
+      responseCode: refunded.responseCode ?? reversed.responseCode,
+    };
+  }
+
+  return refunded.ok ? refunded : voided.ok ? voided : reversed;
+}
+
 function declineMessage(code: string | undefined, raw: string | undefined): string {
   const text = raw?.toUpperCase() ?? "";
   if (code === "04" || text.includes("AVS") || text.includes("CVV")) {
