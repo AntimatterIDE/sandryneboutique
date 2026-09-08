@@ -3,6 +3,7 @@ import {
   Address,
   CreditCardData,
   EcommerceInfo,
+  Environment,
   PorticoConfig,
   ServicesContainer,
   Transaction,
@@ -60,10 +61,15 @@ let configured = false;
 
 function ensureConfigured() {
   if (configured) return;
+  const secretApiKey = process.env.HEARTLAND_SECRET_KEY?.trim() ?? "";
   const config = new PorticoConfig();
-  config.secretApiKey = process.env.HEARTLAND_SECRET_KEY!;
+  config.secretApiKey = secretApiKey;
   config.developerId = porticoDeveloperId();
   config.versionNumber = porticoVersionNumber();
+  // globalpayments-api defaults environment to Test (cert). Prod secret keys
+  // sent to cert.api2 return Portico -2 Authentication Error.
+  config.environment =
+    heartlandKeyEnv(secretApiKey) === "prod" ? Environment.Production : Environment.Test;
   ServicesContainer.configureService(config);
   configured = true;
 }
