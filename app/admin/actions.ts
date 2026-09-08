@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createPrivilegedClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSessionInfo } from "@/lib/auth";
-import type { OrderStatus } from "@/lib/types";
+import { ORDER_STATUSES, isOrderReturned, type OrderStatus } from "@/lib/types";
 
 export interface ActionResult {
   ok: boolean;
@@ -804,8 +804,6 @@ export async function deleteNewsletterSubscriber(id: string): Promise<ActionResu
   return { ok: true, message: "Subscriber removed." };
 }
 
-const ORDER_STATUSES: OrderStatus[] = ["pending", "paid", "shipped", "cancelled"];
-
 export async function updateOrderStatus(
   orderId: string,
   status: OrderStatus
@@ -823,8 +821,8 @@ export async function updateOrderStatus(
     .select("status, refunded_at, refunded_amount")
     .eq("id", orderId)
     .single();
-  if (existing?.refunded_at || existing?.refunded_amount != null || existing?.status === "cancelled") {
-    return { ok: false, message: "This order was refunded and cannot change status." };
+  if (existing && isOrderReturned(existing)) {
+    return { ok: false, message: "This order was returned and cannot change status." };
   }
 
   const { error } = await supabase.from("orders").update({ status }).eq("id", orderId);
@@ -845,7 +843,7 @@ export async function refundOrder(orderId: string): Promise<ActionResult> {
   const supabase = await createPrivilegedClient();
   const { data: order, error } = await supabase.from("orders").select("*").eq("id", orderId).single();
   if (error || !order) return { ok: false, message: "Order not found." };
-  if (order.refunded_at || order.refunded_amount != null || order.status === "cancelled") {
+  if (isOrderReturned(order) || order.status === "cancelled") {
     return { ok: false, message: "This order was already refunded." };
   }
   if (!order.heartland_transaction_id) {
@@ -899,7 +897,7 @@ export async function refundOrder(orderId: string): Promise<ActionResult> {
   const { error: refundUpdateError } = await supabase
     .from("orders")
     .update({
-      status: "cancelled",
+      status: "returned",
       refunded_amount: remaining,
       refunded_at: refundedAt,
       heartland_sync_status: "synced",
@@ -907,8 +905,11 @@ export async function refundOrder(orderId: string): Promise<ActionResult> {
     })
     .eq("id", orderId);
   if (refundUpdateError) {
-    console.error("Refund columns update failed; saving cancelled status only:", refundUpdateError);
-    await supabase.from("orders").update({ status: "cancelled" }).eq("id", orderId);
+    console.error("Refund update failed; saving returned/cancelled status only:", refundUpdateError);
+    const retry = await supabase.from("orders").update({ status: "returned" }).eq("id", orderId);
+    if (retry.error) {
+      await supabase.from("orders").update({ status: "cancelled" }).eq("id", orderId);
+    }
   }
 
   revalidatePath("/admin/orders");

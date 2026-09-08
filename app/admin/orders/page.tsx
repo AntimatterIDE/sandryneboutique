@@ -14,7 +14,7 @@ import { shippingLabelsConfigured } from "@/lib/shipping-label";
 import { createPrivilegedClient } from "@/lib/supabase/server";
 import { supabaseConfigured } from "@/lib/data/products";
 import type { Order, OrderStatus } from "@/lib/types";
-import { formatPrice } from "@/lib/types";
+import { formatPrice, isOrderReturned, orderItemNumber } from "@/lib/types";
 
 export const metadata: Metadata = {
   title: "Orders",
@@ -33,15 +33,31 @@ export default async function AdminOrdersPage({
   if (supabaseConfigured()) {
     const supabase = await createPrivilegedClient();
     let query = supabase.from("orders").select("*").order("created_at", { ascending: false });
-    if (activeFilter !== "all") query = query.eq("status", activeFilter);
+    if (activeFilter === "returned") {
+      query = query.in("status", ["returned", "cancelled"]);
+    } else if (activeFilter === "cancelled") {
+      query = query.eq("status", "cancelled");
+    } else if (activeFilter !== "all") {
+      query = query.eq("status", activeFilter);
+    }
     const { data } = await query;
     orders = (data ?? []) as Order[];
+
+    if (activeFilter === "returned") {
+      orders = orders.filter((order) => isOrderReturned(order));
+    } else if (activeFilter === "cancelled") {
+      orders = orders.filter((order) => !isOrderReturned(order));
+    }
 
     if (queryText) {
       orders = orders.filter((order) => {
         const name = order.shipping_address.full_name.toLowerCase();
         const email = order.email.toLowerCase();
-        return name.includes(queryText) || email.includes(queryText) || order.id.includes(queryText);
+        const itemMatch = order.items.some((item) => {
+          const itemNo = orderItemNumber(item)?.toLowerCase() ?? "";
+          return item.name.toLowerCase().includes(queryText) || itemNo.includes(queryText);
+        });
+        return name.includes(queryText) || email.includes(queryText) || order.id.includes(queryText) || itemMatch;
       });
     }
   }
@@ -96,9 +112,7 @@ export default async function AdminOrdersPage({
                       variant="secondary"
                       className="rounded-none text-[10px] uppercase tracking-[0.14em]"
                     >
-                      {order.refunded_at || order.refunded_amount != null || order.status === "cancelled"
-                        ? "Refunded"
-                        : order.status}
+                      {isOrderReturned(order) ? "Returned" : order.status}
                     </Badge>
                     <span className="text-sm font-medium tabular-nums sm:ml-auto">
                       {formatPrice(order.total_amount)}
@@ -119,7 +133,9 @@ export default async function AdminOrdersPage({
                       Items
                     </h3>
                     <ul className="space-y-2">
-                      {order.items.map((item, i) => (
+                      {order.items.map((item, i) => {
+                        const itemNo = orderItemNumber(item);
+                        return (
                         <li
                           key={i}
                           className="flex flex-col gap-0.5 xs:flex-row sm:flex-row sm:justify-between text-sm"
@@ -132,12 +148,18 @@ export default async function AdminOrdersPage({
                                 ({[item.size, item.color].filter(Boolean).join(" · ")})
                               </span>
                             )}
+                            {itemNo ? (
+                              <span className="block text-xs font-mono text-muted-foreground">
+                                Item # {itemNo}
+                              </span>
+                            ) : null}
                           </span>
                           <span className="tabular-nums shrink-0">
                             {formatPrice(item.price * item.quantity)}
                           </span>
                         </li>
-                      ))}
+                        );
+                      })}
                     </ul>
 
                     <h3 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground mt-6 mb-2">
@@ -168,14 +190,8 @@ export default async function AdminOrdersPage({
                       </h3>
                       <OrderStatusSelect
                         orderId={order.id}
-                        status={
-                          order.refunded_at || order.refunded_amount != null
-                            ? "cancelled"
-                            : order.status
-                        }
-                        locked={Boolean(
-                          order.refunded_at || order.refunded_amount != null || order.status === "cancelled"
-                        )}
+                        status={isOrderReturned(order) ? "returned" : order.status}
+                        locked={isOrderReturned(order) || order.status === "cancelled"}
                       />
                     </div>
                     <div>

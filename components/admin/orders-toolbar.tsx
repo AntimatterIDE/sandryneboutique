@@ -12,6 +12,7 @@ const STATUS_FILTERS = [
   { value: "paid", label: "Paid" },
   { value: "shipped", label: "Shipped" },
   { value: "cancelled", label: "Cancelled" },
+  { value: "returned", label: "Returned" },
 ] as const;
 
 export function OrdersToolbar() {

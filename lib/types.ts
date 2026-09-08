@@ -98,7 +98,15 @@ export interface HomepageSection {
   updated_at: string;
 }
 
-export type OrderStatus = "pending" | "paid" | "shipped" | "cancelled";
+export type OrderStatus = "pending" | "paid" | "shipped" | "cancelled" | "returned";
+
+export const ORDER_STATUSES: OrderStatus[] = [
+  "pending",
+  "paid",
+  "shipped",
+  "cancelled",
+  "returned",
+];
 
 export interface OrderItem {
   product_id: string;
@@ -146,6 +154,24 @@ export interface Order {
   shipping_address: ShippingAddress;
   items: OrderItem[];
   created_at: string;
+}
+
+export function isOrderReturned(
+  order: Pick<Order, "status" | "refunded_at" | "refunded_amount">
+): boolean {
+  return (
+    order.status === "returned" ||
+    Boolean(order.refunded_at) ||
+    order.refunded_amount != null
+  );
+}
+
+export function orderItemNumber(
+  item: Pick<OrderItem, "heartland_public_id" | "heartland_item_id">
+): string | null {
+  if (item.heartland_public_id?.trim()) return item.heartland_public_id.trim();
+  if (item.heartland_item_id != null) return String(item.heartland_item_id);
+  return null;
 }
 
 /** Effective selling price (sale price when on sale). */

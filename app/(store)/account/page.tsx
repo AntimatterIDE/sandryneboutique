@@ -21,6 +21,7 @@ const STATUS_LABELS: Record<Order["status"], string> = {
   paid: "Paid",
   shipped: "Shipped",
   cancelled: "Cancelled",
+  returned: "Returned",
 };
 
 export default async function AccountPage() {

@@ -12,6 +12,7 @@ import {
   saveOrderTracking,
 } from "@/app/admin/actions";
 import type { Order } from "@/lib/types";
+import { isOrderReturned } from "@/lib/types";
 
 export function OrderTools({
   order,
@@ -43,11 +44,7 @@ export function OrderTools({
     });
   };
 
-  const refunded =
-    refundedLocal ||
-    Boolean(order.refunded_at) ||
-    order.refunded_amount != null ||
-    order.status === "cancelled";
+  const refunded = refundedLocal || isOrderReturned(order) || order.status === "cancelled";
   const shipped = order.status === "shipped" || Boolean(order.tracking_number);
 
   return (

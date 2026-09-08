@@ -18,6 +18,7 @@ const STATUSES: { value: OrderStatus; label: string }[] = [
   { value: "paid", label: "Paid" },
   { value: "shipped", label: "Shipped" },
   { value: "cancelled", label: "Cancelled" },
+  { value: "returned", label: "Returned" },
 ];
 
 export function OrderStatusSelect({
