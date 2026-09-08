@@ -848,25 +848,53 @@ export async function refundOrder(orderId: string): Promise<ActionResult> {
     return { ok: false, message: result.message ?? "Refund failed." };
   }
 
+  const salesOrderId =
+    order.heartland_sales_order_id ??
+    (await import("@/lib/heartland-retail")).salesOrderIdFromRetailError(order.heartland_sync_error);
+  if (salesOrderId) {
+    try {
+      const { reverseRetailSale } = await import("@/lib/heartland-retail");
+      await reverseRetailSale(salesOrderId);
+    } catch (err) {
+      console.error(`Retail void failed for sales order ${salesOrderId}:`, err);
+    }
+  }
+
+  try {
+    const { restoreSiteInventory } = await import("@/lib/order-inventory");
+    await restoreSiteInventory(supabase, (order.items ?? []) as import("@/lib/types").OrderItem[]);
+  } catch (err) {
+    console.error(`Site inventory restore failed for order ${orderId}:`, err);
+  }
+
   await supabase
     .from("orders")
     .update({
       status: "cancelled",
       refunded_amount: remaining,
       refunded_at: new Date().toISOString(),
+      heartland_sync_status: "synced",
+      heartland_sync_error: null,
     })
     .eq("id", orderId);
 
   revalidatePath("/admin/orders");
-  return { ok: true, message: "Refund sent to Heartland. The bank may take a few days to post it." };
+  revalidatePath("/shop");
+  const items = (order.items ?? []) as { slug?: string | null }[];
+  for (const item of items) {
+    if (item.slug) revalidatePath(`/products/${item.slug}`);
+  }
+  return {
+    ok: true,
+    message: "Refund sent. Inventory is being added back on the site and in Heartland Retail.",
+  };
 }
 
 export async function retryRetailSync(orderId: string): Promise<ActionResult> {
   const denied = await requireAdmin();
   if (denied) return denied;
 
-  const { heartlandRetailConfigured, salesOrderIdFromRetailError, syncPaidOrderToRetail } =
-    await import("@/lib/heartland-retail");
+  const { heartlandRetailConfigured } = await import("@/lib/heartland-retail");
   if (!heartlandRetailConfigured()) {
     return { ok: false, message: "Heartland Retail is not fully configured." };
   }
@@ -874,75 +902,12 @@ export async function retryRetailSync(orderId: string): Promise<ActionResult> {
   const supabase = await createPrivilegedClient();
   const { data: order, error } = await supabase.from("orders").select("*").eq("id", orderId).single();
   if (error || !order) return { ok: false, message: "Order not found." };
-  if (order.heartland_sync_status === "synced" && order.heartland_sales_order_id) {
-    return { ok: true, message: "Retail is already synced." };
-  }
 
-  try {
-    const items = (order.items ?? []) as {
-      name: string;
-      quantity: number;
-      price: number;
-      heartland_item_id?: number | null;
-    }[];
-    const lines = items.map((item) => {
-      if (item.heartland_item_id == null) {
-        throw new Error(`Missing Heartland item id for ${item.name}`);
-      }
-      return {
-        heartlandItemId: item.heartland_item_id,
-        quantity: item.quantity,
-        unitPrice: Number(item.price),
-      };
-    });
-
-    const shipping = order.shipping_address as {
-      full_name: string;
-      line1: string;
-      line2?: string | null;
-      city: string;
-      state: string;
-      postal_code: string;
-      country: string;
-    };
-
-    const retail = await syncPaidOrderToRetail({
-      email: order.email,
-      fullName: shipping.full_name,
-      shipping,
-      lines,
-      shippingCharge: Number(order.shipping_amount ?? 0),
-      totalAmount: Number(order.total_amount),
-      porticoTransactionId: order.heartland_transaction_id ?? undefined,
-      existingSalesOrderId:
-        order.heartland_sales_order_id ??
-        salesOrderIdFromRetailError(order.heartland_sync_error) ??
-        undefined,
-    });
-
-    await supabase
-      .from("orders")
-      .update({
-        heartland_sales_order_id: retail.salesOrderId,
-        heartland_sync_status: "synced",
-        heartland_sync_error: null,
-      })
-      .eq("id", orderId);
-
-    revalidatePath("/admin/orders");
-    return { ok: true, message: `Retail sales order ${retail.salesOrderId} created. Inventory should drop in Heartland.` };
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : "Retail sync failed.";
-    await supabase
-      .from("orders")
-      .update({
-        heartland_sync_status: "failed",
-        heartland_sync_error: detail.slice(0, 1000),
-      })
-      .eq("id", orderId);
-    revalidatePath("/admin/orders");
-    return { ok: false, message: detail };
-  }
+  const { syncWebsiteOrderToRetail } = await import("@/lib/retail-order-sync");
+  const result = await syncWebsiteOrderToRetail(supabase, order);
+  revalidatePath("/admin/orders");
+  if (!result.ok) return { ok: false, message: result.error };
+  return { ok: true, message: `Retail sales order ${result.salesOrderId} created. Inventory should drop in Heartland.` };
 }
 
 export async function saveOrderTracking(

@@ -43,6 +43,23 @@ export async function GET(request: Request) {
   }
 
   const admin = createAdminClient();
+
+  const { data: unsynced } = await admin
+    .from("orders")
+    .select("*")
+    .in("heartland_sync_status", ["failed", "pending"])
+    .is("refunded_at", null);
+  if (unsynced?.length) {
+    const { syncWebsiteOrderToRetail } = await import("@/lib/retail-order-sync");
+    for (const order of unsynced) {
+      try {
+        await syncWebsiteOrderToRetail(admin, order);
+      } catch (err) {
+        console.error(`Automatic Retail sync failed for order ${order.id}:`, err);
+      }
+    }
+  }
+
   const { data: variants, error } = await admin
     .from("product_variants")
     .select("id, heartland_item_id, inventory_count")

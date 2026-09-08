@@ -848,6 +848,46 @@ export async function completeInvoice(invoiceId: number): Promise<void> {
   });
 }
 
+export async function voidSalesOrder(orderId: number): Promise<void> {
+  await retailFetch(`/sales/orders/${orderId}`, {
+    method: "PUT",
+    body: JSON.stringify({ status: "void" }),
+  });
+}
+
+export async function voidInvoice(invoiceId: number): Promise<void> {
+  await retailFetch(`/sales/invoices/${invoiceId}`, {
+    method: "PUT",
+    body: JSON.stringify({ status: "void" }),
+  });
+}
+
+/** Void invoices (if any) then the sales order so Retail inventory comes back. */
+export async function reverseRetailSale(salesOrderId: number): Promise<void> {
+  try {
+    const filter = encodeURIComponent(JSON.stringify({ order_id: salesOrderId }));
+    const { body } = await retailFetch(`/sales/invoices?_filter[]=${filter}&per_page=20`);
+    const result = body as SearchResult<{ id: number }>;
+    for (const invoice of result.results ?? []) {
+      try {
+        await voidInvoice(invoice.id);
+      } catch (err) {
+        console.warn(`Heartland Retail invoice ${invoice.id} void skipped:`, err);
+      }
+    }
+  } catch (err) {
+    console.warn("Heartland Retail invoice lookup for void skipped:", err);
+  }
+
+  try {
+    await voidSalesOrder(salesOrderId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "";
+    if (!/void|already|status/i.test(message)) throw err;
+    console.warn("Heartland Retail sales order void skipped:", err);
+  }
+}
+
 export interface RetailCheckoutLine {
   heartlandItemId: number;
   quantity: number;
@@ -883,6 +923,8 @@ export async function syncPaidOrderToRetail(input: {
   porticoTransactionId?: string;
   /** Resume an order that already has lines (payment previously 500'd). */
   existingSalesOrderId?: number;
+  /** Persist the Retail id as soon as it exists so retries do not create duplicates. */
+  persistSalesOrderId?: (id: number) => Promise<void>;
 }): Promise<{ salesOrderId: number; invoiceId: number }> {
   if (!heartlandRetailConfigured()) {
     throw new Error("Heartland Retail is not fully configured.");
@@ -919,6 +961,7 @@ export async function syncPaidOrderToRetail(input: {
       shipping_address_id: addressId,
       billing_address_id: addressId,
     });
+    await input.persistSalesOrderId?.(salesOrderId);
 
     for (const line of input.lines) {
       const lineId = await addOrderLine(salesOrderId, {
@@ -928,6 +971,8 @@ export async function syncPaidOrderToRetail(input: {
       });
       await distributeOrderLine(salesOrderId, lineId, locationId);
     }
+  } else {
+    await input.persistSalesOrderId?.(salesOrderId);
   }
 
   await attachSalesOrderAddresses(salesOrderId, customerId, addressId, {

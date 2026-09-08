@@ -407,6 +407,9 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
         shippingCharge: shippingCost,
         totalAmount: total,
         porticoTransactionId: charge.transactionId,
+        persistSalesOrderId: async (id) => {
+          await admin.from("orders").update({ heartland_sales_order_id: id }).eq("id", order.id);
+        },
       });
 
       await admin
@@ -419,6 +422,8 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
         .eq("id", order.id);
     } catch (err) {
       const detail = err instanceof Error ? err.message : "Retail sync failed.";
+      const { salesOrderIdFromRetailError } = await import("@/lib/heartland-retail");
+      const createdId = salesOrderIdFromRetailError(detail);
       console.error(
         `CRITICAL: order ${order.id} paid (${charge.transactionId}) but Heartland Retail sync failed:`,
         err
@@ -426,6 +431,7 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
       await admin
         .from("orders")
         .update({
+          ...(createdId ? { heartland_sales_order_id: createdId } : {}),
           heartland_sync_status: "failed",
           heartland_sync_error: detail.slice(0, 1000),
         })

@@ -9,7 +9,6 @@ import {
   buyOrderShippingLabel,
   quoteOrderShipping,
   refundOrder,
-  retryRetailSync,
   saveOrderTracking,
 } from "@/app/admin/actions";
 import type { Order } from "@/lib/types";
@@ -61,7 +60,13 @@ export function OrderTools({
             variant="outline"
             disabled={pending || !order.heartland_transaction_id}
             onClick={() => {
-              if (!confirm("Refund this charge back to the card in Heartland?")) return;
+              if (
+                !confirm(
+                  "Refund this charge to the card and add the item back to inventory on the site and in Heartland?"
+                )
+              ) {
+                return;
+              }
               run(() => refundOrder(order.id));
             }}
             className="rounded-none tracking-[0.12em] uppercase text-xs"
@@ -70,26 +75,6 @@ export function OrderTools({
           </Button>
         )}
       </div>
-
-      {order.heartland_sync_status && order.heartland_sync_status !== "synced" ? (
-        <div>
-          <h3 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground mb-2">
-            Heartland Retail
-          </h3>
-          {order.heartland_sync_error ? (
-            <p className="text-xs text-destructive mb-2 break-words">{order.heartland_sync_error}</p>
-          ) : null}
-          <Button
-            type="button"
-            variant="outline"
-            disabled={pending}
-            onClick={() => run(() => retryRetailSync(order.id))}
-            className="rounded-none tracking-[0.12em] uppercase text-xs"
-          >
-            Finish inventory sync
-          </Button>
-        </div>
-      ) : null}
 
       <div>
         <h3 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground mb-2">
