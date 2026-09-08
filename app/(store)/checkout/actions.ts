@@ -1,6 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
+import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { supabaseConfigured } from "@/lib/data/products";
@@ -16,7 +17,7 @@ import {
 } from "@/lib/heartland-retail";
 import { consumeCheckoutAttempt, getClientIp } from "@/lib/checkout-velocity";
 import { hcaptchaConfigured, verifyHCaptcha } from "@/lib/hcaptcha";
-import { FLAT_SHIPPING_RATE, FREE_SHIPPING_THRESHOLD } from "@/lib/constants";
+import { checkoutTotals } from "@/lib/tax";
 import { discountAmount, findDiscount } from "@/lib/discounts";
 import type { OrderItem, Product, ProductVariant, ShippingAddress } from "@/lib/types";
 import { effectivePrice } from "@/lib/types";
@@ -240,9 +241,12 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
     discount = discountAmount(subtotal, def);
   }
 
-  const discountedSubtotal = Math.max(0, subtotal - discount);
-  const shippingCost = discountedSubtotal >= FREE_SHIPPING_THRESHOLD ? 0 : FLAT_SHIPPING_RATE;
-  const total = Math.round((discountedSubtotal + shippingCost) * 100) / 100;
+  const { discountedSubtotal, shipping: shippingCost, tax, total } = checkoutTotals({
+    subtotal,
+    discount,
+    state: input.shipping.state,
+    postalCode: input.shipping.postal_code,
+  });
 
   const billingStreet = input.billing?.line1?.trim() || input.shipping.line1;
   const billingPostal = input.billing?.postal_code?.trim() || input.shipping.postal_code;
@@ -269,20 +273,33 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { data: order, error: orderError } = await admin
+  const orderPayload = {
+    user_id: user?.id ?? null,
+    email: input.shipping.email,
+    total_amount: total,
+    status: "paid" as const,
+    heartland_transaction_id: charge.transactionId,
+    heartland_sync_status: heartlandRetailConfigured() ? "pending" : null,
+    tax_amount: tax,
+    shipping_amount: shippingCost,
+    shipping_address: input.shipping,
+    items: orderItems,
+  };
+
+  let { data: order, error: orderError } = await admin
     .from("orders")
-    .insert({
-      user_id: user?.id ?? null,
-      email: input.shipping.email,
-      total_amount: total,
-      status: "paid",
-      heartland_transaction_id: charge.transactionId,
-      heartland_sync_status: heartlandRetailConfigured() ? "pending" : null,
-      shipping_address: input.shipping,
-      items: orderItems,
-    })
+    .insert(orderPayload)
     .select("id")
     .single();
+
+  if (orderError) {
+    const { tax_amount: _tax, shipping_amount: _ship, ...legacyPayload } = orderPayload;
+    void _tax;
+    void _ship;
+    const retry = await admin.from("orders").insert(legacyPayload).select("id").single();
+    order = retry.data;
+    orderError = retry.error;
+  }
 
   if (orderError || !order) {
     console.error(
@@ -352,18 +369,29 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
         .update({
           heartland_sales_order_id: retail.salesOrderId,
           heartland_sync_status: "synced",
+          heartland_sync_error: null,
         })
         .eq("id", order.id);
     } catch (err) {
+      const detail = err instanceof Error ? err.message : "Retail sync failed.";
       console.error(
         `CRITICAL: order ${order.id} paid (${charge.transactionId}) but Heartland Retail sync failed:`,
         err
       );
       await admin
         .from("orders")
-        .update({ heartland_sync_status: "failed" })
+        .update({
+          heartland_sync_status: "failed",
+          heartland_sync_error: detail.slice(0, 1000),
+        })
         .eq("id", order.id);
     }
+  }
+
+  revalidatePath("/shop");
+  revalidatePath("/admin/orders");
+  for (const item of orderItems) {
+    if (item.slug) revalidatePath(`/products/${item.slug}`);
   }
 
   return { ok: true, orderId: order.id };

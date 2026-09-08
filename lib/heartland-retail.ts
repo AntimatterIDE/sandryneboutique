@@ -614,11 +614,22 @@ export async function createSalesOrder(input: {
   source_location_id: number;
   shipping_charge?: number;
 }): Promise<number> {
-  const { res } = await retailFetch("/sales/orders", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-  return parseLocationId(res.headers.get("location"));
+  try {
+    const { res } = await retailFetch("/sales/orders", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return parseLocationId(res.headers.get("location"));
+  } catch (err) {
+    if (input.shipping_charge == null || input.shipping_charge === 0) throw err;
+    const { shipping_charge, ...withoutShipping } = input;
+    void shipping_charge;
+    const { res } = await retailFetch("/sales/orders", {
+      method: "POST",
+      body: JSON.stringify(withoutShipping),
+    });
+    return parseLocationId(res.headers.get("location"));
+  }
 }
 
 export async function addOrderLine(
@@ -652,20 +663,35 @@ export async function addOrderPayment(
     reference?: string;
   }
 ): Promise<number> {
-  const payload: Record<string, unknown> = {
-    type: "CustomPayment",
-    deposit: true,
-    amount: input.amount,
-    payment_type_id: input.payment_type_id,
-  };
-  if (input.reference) {
-    payload.custom = { portico_transaction_id: input.reference };
+  const amount = Math.round(input.amount * 100) / 100;
+  const attempts: Record<string, unknown>[] = [
+    {
+      type: "CustomPayment",
+      deposit: true,
+      amount,
+      payment_type_id: input.payment_type_id,
+      ...(input.reference ? { custom: { portico_transaction_id: input.reference } } : {}),
+    },
+    {
+      deposit: true,
+      amount,
+      payment_type_id: input.payment_type_id,
+    },
+  ];
+
+  let lastError: unknown;
+  for (const payload of attempts) {
+    try {
+      const { res } = await retailFetch(`/sales/orders/${orderId}/payments`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      return parseLocationId(res.headers.get("location"));
+    } catch (err) {
+      lastError = err;
+    }
   }
-  const { res } = await retailFetch(`/sales/orders/${orderId}/payments`, {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-  return parseLocationId(res.headers.get("location"));
+  throw lastError instanceof Error ? lastError : new Error("Retail payment create failed.");
 }
 
 export async function openSalesOrder(orderId: number): Promise<void> {
@@ -756,7 +782,7 @@ export async function syncPaidOrderToRetail(input: {
     customer_id: customerId,
     station_id: stationId,
     source_location_id: locationId,
-    shipping_charge: input.shippingCharge,
+    shipping_charge: Math.round((input.shippingCharge || 0) * 100) / 100,
   });
 
   for (const line of input.lines) {

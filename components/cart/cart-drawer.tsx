@@ -150,7 +150,7 @@ export function CartDrawer() {
                 <span className="font-medium tabular-nums">{formatPrice(subtotal)}</span>
               </div>
               <p className="text-xs text-muted-foreground">
-                Shipping and discount codes are calculated at checkout. Sales tax is not collected online yet.
+                Shipping, Georgia sales tax, and discount codes are calculated at checkout.
               </p>
               <Button
                 asChild

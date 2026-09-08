@@ -8,7 +8,9 @@ import {
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { OrderStatusSelect } from "@/components/admin/order-status-select";
+import { OrderTools } from "@/components/admin/order-tools";
 import { OrdersToolbar } from "@/components/admin/orders-toolbar";
+import { shippingLabelsConfigured } from "@/lib/shipping-label";
 import { createPrivilegedClient } from "@/lib/supabase/server";
 import { supabaseConfigured } from "@/lib/data/products";
 import type { Order, OrderStatus } from "@/lib/types";
@@ -185,6 +187,17 @@ export default async function AdminOrdersPage({
                       </h3>
                       <p className="text-xs font-mono break-all">{order.id}</p>
                     </div>
+                    {(order.tax_amount != null || order.shipping_amount != null) && (
+                      <div className="text-xs text-muted-foreground space-y-1">
+                        {order.shipping_amount != null && (
+                          <p>Shipping {formatPrice(Number(order.shipping_amount))}</p>
+                        )}
+                        {order.tax_amount != null && (
+                          <p>Tax {formatPrice(Number(order.tax_amount))}</p>
+                        )}
+                      </div>
+                    )}
+                    <OrderTools order={order} labelsEnabled={shippingLabelsConfigured()} />
                   </div>
                 </div>
               </AccordionContent>

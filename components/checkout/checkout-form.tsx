@@ -12,7 +12,8 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { TrustBadges } from "@/components/product/trust-badges";
-import { FLAT_SHIPPING_RATE, FREE_SHIPPING_THRESHOLD } from "@/lib/constants";
+import { FREE_SHIPPING_THRESHOLD } from "@/lib/constants";
+import { checkoutTotals } from "@/lib/tax";
 import { discountAmount, findDiscount } from "@/lib/discounts";
 import { cartLineKey, cartSubtotal, useCart } from "@/lib/store/cart";
 import { useHydrated } from "@/lib/hooks/use-hydrated";
@@ -96,14 +97,12 @@ export function CheckoutForm({
   const appliedDiscount = findDiscount(appliedCode);
   const subtotal = cartSubtotal(items);
   const discount = appliedDiscount ? discountAmount(subtotal, appliedDiscount) : 0;
-  const discountedSubtotal = Math.max(0, subtotal - discount);
-  const shippingCost =
-    subtotal === 0
-      ? 0
-      : discountedSubtotal >= FREE_SHIPPING_THRESHOLD
-        ? 0
-        : FLAT_SHIPPING_RATE;
-  const total = discountedSubtotal + shippingCost;
+  const { shipping: shippingCost, tax, total } = checkoutTotals({
+    subtotal,
+    discount,
+    state: shipping.state,
+    postalCode: shipping.postal_code,
+  });
 
   const applyDiscount = () => {
     const def = findDiscount(discountInput);
@@ -439,6 +438,14 @@ export function CheckoutForm({
                 <dt className="text-muted-foreground">Shipping</dt>
                 <dd className="tabular-nums">
                   {shippingCost === 0 ? "Free" : formatPrice(shippingCost)}
+                </dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-muted-foreground">Est. tax</dt>
+                <dd className="tabular-nums">
+                  {shipping.state.trim()
+                    ? formatPrice(tax)
+                    : "Enter shipping address"}
                 </dd>
               </div>
               <Separator className="my-3" />

@@ -135,6 +135,14 @@ export interface Order {
   heartland_transaction_id: string | null;
   heartland_sales_order_id: number | null;
   heartland_sync_status: HeartlandSyncStatus | null;
+  heartland_sync_error?: string | null;
+  tax_amount?: number | null;
+  shipping_amount?: number | null;
+  tracking_number?: string | null;
+  tracking_carrier?: string | null;
+  shipping_label_url?: string | null;
+  refunded_amount?: number | null;
+  refunded_at?: string | null;
   shipping_address: ShippingAddress;
   items: OrderItem[];
   created_at: string;

@@ -54,6 +54,18 @@ export async function GET(request: Request) {
   }
 
   const rows = variants ?? [];
+  const skipItemIds = new Set<number>();
+  const { data: failedOrders } = await admin
+    .from("orders")
+    .select("items")
+    .eq("heartland_sync_status", "failed");
+  for (const order of failedOrders ?? []) {
+    const items = (order.items ?? []) as { heartland_item_id?: number | null }[];
+    for (const item of items) {
+      if (typeof item.heartland_item_id === "number") skipItemIds.add(item.heartland_item_id);
+    }
+  }
+
   const itemIds = [
     ...new Set(
       rows
@@ -82,6 +94,7 @@ export async function GET(request: Request) {
 
   for (const variant of rows) {
     const itemId = variant.heartland_item_id as number;
+    if (skipItemIds.has(itemId)) continue;
     const qty = qtyByItem.get(itemId);
     if (qty == null) continue;
     if (qty === variant.inventory_count) continue;

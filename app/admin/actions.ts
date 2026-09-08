@@ -827,6 +827,182 @@ export async function updateOrderStatus(
   return { ok: true, message: "Order updated." };
 }
 
+export async function refundOrder(orderId: string): Promise<ActionResult> {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  const supabase = await createPrivilegedClient();
+  const { data: order, error } = await supabase.from("orders").select("*").eq("id", orderId).single();
+  if (error || !order) return { ok: false, message: "Order not found." };
+  if (order.refunded_at) return { ok: false, message: "This order was already refunded." };
+  if (!order.heartland_transaction_id) {
+    return { ok: false, message: "No Heartland transaction to refund." };
+  }
+
+  const { refundTransaction } = await import("@/lib/heartland");
+  const remaining = Number(order.total_amount) - Number(order.refunded_amount ?? 0);
+  const result = await refundTransaction(order.heartland_transaction_id, remaining);
+  if (!result.ok) {
+    return { ok: false, message: result.message ?? "Refund failed." };
+  }
+
+  await supabase
+    .from("orders")
+    .update({
+      status: "cancelled",
+      refunded_amount: remaining,
+      refunded_at: new Date().toISOString(),
+    })
+    .eq("id", orderId);
+
+  revalidatePath("/admin/orders");
+  return { ok: true, message: "Refund sent to Heartland. The bank may take a few days to post it." };
+}
+
+export async function retryRetailSync(orderId: string): Promise<ActionResult> {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  const { heartlandRetailConfigured, syncPaidOrderToRetail } = await import(
+    "@/lib/heartland-retail"
+  );
+  if (!heartlandRetailConfigured()) {
+    return { ok: false, message: "Heartland Retail is not fully configured." };
+  }
+
+  const supabase = await createPrivilegedClient();
+  const { data: order, error } = await supabase.from("orders").select("*").eq("id", orderId).single();
+  if (error || !order) return { ok: false, message: "Order not found." };
+  if (order.heartland_sync_status === "synced" && order.heartland_sales_order_id) {
+    return { ok: true, message: "Retail is already synced." };
+  }
+
+  try {
+    const items = (order.items ?? []) as {
+      name: string;
+      quantity: number;
+      price: number;
+      heartland_item_id?: number | null;
+    }[];
+    const lines = items.map((item) => {
+      if (item.heartland_item_id == null) {
+        throw new Error(`Missing Heartland item id for ${item.name}`);
+      }
+      return {
+        heartlandItemId: item.heartland_item_id,
+        quantity: item.quantity,
+        unitPrice: Number(item.price),
+      };
+    });
+
+    const shipping = order.shipping_address as {
+      full_name: string;
+      line1: string;
+      line2?: string | null;
+      city: string;
+      state: string;
+      postal_code: string;
+      country: string;
+    };
+
+    const retail = await syncPaidOrderToRetail({
+      email: order.email,
+      fullName: shipping.full_name,
+      shipping,
+      lines,
+      shippingCharge: Number(order.shipping_amount ?? 0),
+      totalAmount: Number(order.total_amount),
+      porticoTransactionId: order.heartland_transaction_id ?? undefined,
+    });
+
+    await supabase
+      .from("orders")
+      .update({
+        heartland_sales_order_id: retail.salesOrderId,
+        heartland_sync_status: "synced",
+        heartland_sync_error: null,
+      })
+      .eq("id", orderId);
+
+    revalidatePath("/admin/orders");
+    return { ok: true, message: `Retail sales order ${retail.salesOrderId} created. Inventory should drop in Heartland.` };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : "Retail sync failed.";
+    await supabase
+      .from("orders")
+      .update({
+        heartland_sync_status: "failed",
+        heartland_sync_error: detail.slice(0, 1000),
+      })
+      .eq("id", orderId);
+    revalidatePath("/admin/orders");
+    return { ok: false, message: detail };
+  }
+}
+
+export async function saveOrderTracking(
+  orderId: string,
+  trackingNumber: string,
+  trackingCarrier: string
+): Promise<ActionResult> {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  const tracking = trackingNumber.trim();
+  if (!tracking) return { ok: false, message: "Enter a tracking number." };
+
+  const supabase = await createPrivilegedClient();
+  const { error } = await supabase
+    .from("orders")
+    .update({
+      tracking_number: tracking,
+      tracking_carrier: trackingCarrier.trim() || "UPS",
+      status: "shipped",
+    })
+    .eq("id", orderId);
+
+  if (error) {
+    console.error("Tracking save failed:", error);
+    return {
+      ok: false,
+      message: "Could not save tracking. Run supabase/migrations/008_order_ops.sql in Supabase.",
+    };
+  }
+
+  revalidatePath("/admin/orders");
+  return { ok: true, message: "Order marked shipped with tracking." };
+}
+
+export async function buyOrderShippingLabel(orderId: string): Promise<ActionResult> {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  const supabase = await createPrivilegedClient();
+  const { data: order, error } = await supabase.from("orders").select("*").eq("id", orderId).single();
+  if (error || !order) return { ok: false, message: "Order not found." };
+
+  try {
+    const { buyUpsShippingLabel } = await import("@/lib/shipping-label");
+    const label = await buyUpsShippingLabel(order.shipping_address);
+    await supabase
+      .from("orders")
+      .update({
+        tracking_number: label.trackingNumber,
+        tracking_carrier: label.carrier,
+        shipping_label_url: label.labelUrl,
+        status: "shipped",
+      })
+      .eq("id", orderId);
+    revalidatePath("/admin/orders");
+    return { ok: true, message: `UPS label purchased. Tracking ${label.trackingNumber}` };
+  } catch (err) {
+    return {
+      ok: false,
+      message: err instanceof Error ? err.message : "Could not buy a shipping label.",
+    };
+  }
+}
+
 export interface HeartlandVariantLookup {
   heartland_item_id: number;
   heartland_public_id: string;
