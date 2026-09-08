@@ -13,7 +13,7 @@ import {
   saveOrderTracking,
 } from "@/app/admin/actions";
 import type { Order } from "@/lib/types";
-import { isOrderReturned } from "@/lib/types";
+import { isOrderInventoryRestocked, isOrderReturned } from "@/lib/types";
 
 export function OrderTools({
   order,
@@ -28,6 +28,7 @@ export function OrderTools({
   const [carrier, setCarrier] = useState(order.tracking_carrier ?? "UPS");
   const [rates, setRates] = useState<{ code: string; name: string; amount: string }[]>([]);
   const [refundedLocal, setRefundedLocal] = useState(false);
+  const [restockedLocal, setRestockedLocal] = useState(false);
 
   const run = (fn: () => Promise<{ ok: boolean; message: string; labelUrl?: string; rates?: { code: string; name: string; amount: string }[] }>) => {
     startTransition(async () => {
@@ -37,6 +38,14 @@ export function OrderTools({
         if (result.rates) setRates(result.rates);
         if (result.labelUrl) window.open(result.labelUrl, "_blank", "noopener,noreferrer");
         if (result.message.toLowerCase().includes("refund")) setRefundedLocal(true);
+        if (
+          result.message.toLowerCase().includes("already put back") ||
+          result.message.toLowerCase().includes("already back") ||
+          result.message.toLowerCase().includes("not increased") ||
+          result.message.toLowerCase().includes("was put back")
+        ) {
+          setRestockedLocal(true);
+        }
       } else {
         toast.error(result.message);
         if (result.message.toLowerCase().includes("already refunded")) setRefundedLocal(true);
@@ -46,6 +55,7 @@ export function OrderTools({
   };
 
   const refunded = refundedLocal || isOrderReturned(order) || order.status === "cancelled";
+  const restocked = restockedLocal || isOrderInventoryRestocked(order);
   const shipped = order.status === "shipped" || Boolean(order.tracking_number);
 
   return (
@@ -70,15 +80,19 @@ export function OrderTools({
                 ? ` on ${new Date(order.refunded_at).toLocaleDateString()}`
                 : " This card has already been refunded."}
             </p>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={pending}
-              onClick={() => run(() => restockOrderInventory(order.id))}
-              className="rounded-none tracking-[0.12em] uppercase text-xs"
-            >
-              Put stock back
-            </Button>
+            {restocked ? (
+              <p className="text-xs text-muted-foreground">Stock for this order is already back.</p>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={pending}
+                onClick={() => run(() => restockOrderInventory(order.id))}
+                className="rounded-none tracking-[0.12em] uppercase text-xs"
+              >
+                Put stock back
+              </Button>
+            )}
           </div>
         ) : (
           <div className="space-y-2">
@@ -100,15 +114,19 @@ export function OrderTools({
             >
               Refund card
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={pending}
-              onClick={() => run(() => restockOrderInventory(order.id))}
-              className="rounded-none tracking-[0.12em] uppercase text-xs"
-            >
-              Put stock back
-            </Button>
+            {restocked ? (
+              <p className="text-xs text-muted-foreground">Stock for this order is already back.</p>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={pending}
+                onClick={() => run(() => restockOrderInventory(order.id))}
+                className="rounded-none tracking-[0.12em] uppercase text-xs"
+              >
+                Put stock back
+              </Button>
+            )}
           </div>
         )}
       </div>

@@ -151,6 +151,7 @@ export interface Order {
   shipping_label_url?: string | null;
   refunded_amount?: number | null;
   refunded_at?: string | null;
+  inventory_restocked_at?: string | null;
   shipping_address: ShippingAddress;
   items: OrderItem[];
   created_at: string;
@@ -164,6 +165,13 @@ export function isOrderReturned(
     Boolean(order.refunded_at) ||
     order.refunded_amount != null
   );
+}
+
+export function isOrderInventoryRestocked(
+  order: Pick<Order, "inventory_restocked_at" | "heartland_sync_error">
+): boolean {
+  if (order.inventory_restocked_at) return true;
+  return String(order.heartland_sync_error ?? "").startsWith("RESTOCKED");
 }
 
 export function orderItemNumber(

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createPrivilegedClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSessionInfo } from "@/lib/auth";
-import { ORDER_STATUSES, isOrderReturned, type OrderStatus } from "@/lib/types";
+import { ORDER_STATUSES, isOrderInventoryRestocked, isOrderReturned, type OrderStatus } from "@/lib/types";
 
 export interface ActionResult {
   ok: boolean;
@@ -871,6 +871,7 @@ export async function refundOrder(orderId: string): Promise<ActionResult> {
       refunded_at: refundedAt,
       heartland_sync_status: "synced",
       heartland_sync_error: restock.ok ? null : restock.detail.slice(0, 1000),
+      inventory_restocked_at: restock.ok ? refundedAt : undefined,
     })
     .eq("id", orderId);
   if (refundUpdateError) {
@@ -879,6 +880,9 @@ export async function refundOrder(orderId: string): Promise<ActionResult> {
     if (retry.error) {
       await supabase.from("orders").update({ status: "cancelled" }).eq("id", orderId);
     }
+  }
+  if (restock.ok) {
+    await markInventoryRestocked(supabase, orderId);
   }
 
   revalidatePath("/admin/orders");
@@ -900,6 +904,27 @@ export async function refundOrder(orderId: string): Promise<ActionResult> {
   };
 }
 
+async function markInventoryRestocked(
+  supabase: Awaited<ReturnType<typeof createPrivilegedClient>>,
+  orderId: string
+): Promise<void> {
+  const at = new Date().toISOString();
+  const { error } = await supabase
+    .from("orders")
+    .update({
+      inventory_restocked_at: at,
+      heartland_sync_status: "synced",
+      heartland_sync_error: null,
+    })
+    .eq("id", orderId);
+  if (error) {
+    await supabase
+      .from("orders")
+      .update({ heartland_sync_error: `RESTOCKED ${at}` })
+      .eq("id", orderId);
+  }
+}
+
 async function restockOrderInHeartlandAndSite(
   supabase: Awaited<ReturnType<typeof createPrivilegedClient>>,
   order: {
@@ -909,19 +934,21 @@ async function restockOrderInHeartlandAndSite(
     shipping_address?: { full_name?: string } | null;
     heartland_sales_order_id?: number | null;
     heartland_sync_error?: string | null;
-  }
+  },
+  options?: { allowOnHandIncrease?: boolean }
 ): Promise<{ ok: boolean; detail: string; items: import("@/lib/types").OrderItem[] }> {
   const items = (order.items ?? []) as import("@/lib/types").OrderItem[];
   const { salesOrderIdFromRetailError, restockRetailInventory } = await import(
     "@/lib/heartland-retail"
   );
-  const { mirrorRetailQtyToSite, restoreSiteInventory } = await import("@/lib/order-inventory");
+  const { mirrorRetailQtyToSite } = await import("@/lib/order-inventory");
   try {
     await restockRetailInventory({
       email: order.email,
       fullName: order.shipping_address?.full_name || "Customer",
       existingSalesOrderId:
         order.heartland_sales_order_id ?? salesOrderIdFromRetailError(order.heartland_sync_error),
+      allowOnHandIncrease: options?.allowOnHandIncrease,
       lines: items
         .filter((item) => item.heartland_item_id != null)
         .map((item) => ({
@@ -934,16 +961,10 @@ async function restockOrderInHeartlandAndSite(
       await mirrorRetailQtyToSite(supabase, items);
     } catch (mirrorErr) {
       console.error(`Retail qty mirror failed for order ${order.id}:`, mirrorErr);
-      await restoreSiteInventory(supabase, items);
     }
     return { ok: true, detail: "Heartland inventory was restocked.", items };
   } catch (err) {
     console.error(`Heartland Retail restock failed for order ${order.id}:`, err);
-    try {
-      await restoreSiteInventory(supabase, items);
-    } catch (siteErr) {
-      console.error(`Site inventory restore failed for order ${order.id}:`, siteErr);
-    }
     return {
       ok: false,
       detail: err instanceof Error ? err.message : "Heartland restock failed.",
@@ -959,22 +980,29 @@ export async function restockOrderInventory(orderId: string): Promise<ActionResu
   const supabase = await createPrivilegedClient();
   const { data: order, error } = await supabase.from("orders").select("*").eq("id", orderId).single();
   if (error || !order) return { ok: false, message: "Order not found." };
+  if (isOrderInventoryRestocked(order)) {
+    return { ok: true, message: "Stock for this order was already put back. It will not be added again." };
+  }
 
-  const restock = await restockOrderInHeartlandAndSite(supabase, order);
+  const alreadyRefunded = isOrderReturned(order) || order.status === "cancelled";
+  const restock = await restockOrderInHeartlandAndSite(supabase, order, {
+    allowOnHandIncrease: !alreadyRefunded,
+  });
   if (restock.ok) {
-    await supabase
-      .from("orders")
-      .update({ heartland_sync_status: "synced", heartland_sync_error: null })
-      .eq("id", orderId);
+    await markInventoryRestocked(supabase, orderId);
   }
   revalidatePath("/admin/orders");
   revalidatePath("/shop");
   for (const item of restock.items) {
     if (item.slug) revalidatePath(`/products/${item.slug}`);
   }
-  return restock.ok
-    ? { ok: true, message: "Heartland quantity was put back and the site inventory was updated." }
-    : { ok: false, message: restock.detail };
+  if (!restock.ok) return { ok: false, message: restock.detail };
+  return {
+    ok: true,
+    message: alreadyRefunded
+      ? "Leftover Heartland holds were released. On-hand was not increased again for this refunded order."
+      : "Heartland quantity was put back and the site inventory was updated.",
+  };
 }
 
 export async function retryRetailSync(orderId: string): Promise<ActionResult> {

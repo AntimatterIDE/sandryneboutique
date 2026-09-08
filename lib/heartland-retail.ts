@@ -465,14 +465,22 @@ function isHeartlandItemActive(item: HeartlandRetailItem): boolean {
   return true;
 }
 
-function inventoryRowQty(row: HeartlandInventoryValue): number {
-  const raw = row.qty_available ?? row.qty_on_hand ?? row.qty ?? 0;
+function numQty(raw: unknown): number {
   const n = typeof raw === "number" ? raw : Number(raw);
   return Math.max(0, Math.floor(Number.isFinite(n) ? n : 0));
 }
 
-/** Qty available for one item (all locations summed, or filtered to web location). */
-export async function getItemQtyAvailable(itemId: number): Promise<number> {
+function inventoryRowQty(row: HeartlandInventoryValue): number {
+  return numQty(row.qty_available ?? row.qty_on_hand ?? row.qty);
+}
+
+export interface HeartlandItemQty {
+  available: number;
+  onHand: number;
+  committed: number;
+}
+
+async function getItemInventorySnapshot(itemId: number): Promise<HeartlandItemQty> {
   const locationId = Number(process.env.HEARTLAND_RETAIL_LOCATION_ID || 0);
   const params = new URLSearchParams();
   params.append("group[]", "item_id");
@@ -481,17 +489,24 @@ export async function getItemQtyAvailable(itemId: number): Promise<number> {
   params.append("_filter[]", JSON.stringify({ item_id: itemId }));
 
   const { body } = await retailFetch(`/inventory/values?${params.toString()}`);
-  const result = body as SearchResult<HeartlandInventoryValue>;
-  const rows = result.results ?? [];
+  const all = (body as SearchResult<HeartlandInventoryValue>).results ?? [];
+  const rows = locationId > 0 ? all.filter((row) => row.location_id === locationId) : all;
+  const use = rows.length > 0 ? rows : all;
 
-  if (locationId > 0) {
-    const atLocation = rows.filter((r) => r.location_id === locationId);
-    if (atLocation.length > 0) {
-      return atLocation.reduce((s, r) => s + inventoryRowQty(r), 0);
-    }
-  }
+  return use.reduce(
+    (acc, row) => ({
+      available: acc.available + inventoryRowQty(row),
+      onHand: acc.onHand + numQty(row.qty_on_hand ?? row.qty),
+      committed: acc.committed + numQty(row.qty_committed),
+    }),
+    { available: 0, onHand: 0, committed: 0 }
+  );
+}
 
-  return rows.reduce((s, r) => s + inventoryRowQty(r), 0);
+/** Qty available for one item (all locations summed, or filtered to web location). */
+export async function getItemQtyAvailable(itemId: number): Promise<number> {
+  const snap = await getItemInventorySnapshot(itemId);
+  return snap.available;
 }
 
 /**
@@ -1022,24 +1037,16 @@ export async function createRetailReturn(input: {
   return ticketId;
 }
 
-async function qtyForLines(lines: RetailCheckoutLine[]): Promise<Map<number, number>> {
-  return getInventoryByItemIds(lines.map((line) => line.heartlandItemId));
-}
-
-function shortfallQty(
-  lines: RetailCheckoutLine[],
-  before: Map<number, number>,
-  after: Map<number, number>
-): RetailCheckoutLine[] {
-  return lines
-    .map((line) => {
-      const start = before.get(line.heartlandItemId) ?? 0;
-      const end = after.get(line.heartlandItemId) ?? 0;
-      const gained = end - start;
-      const needed = Math.max(0, line.quantity - gained);
-      return { ...line, quantity: needed };
+async function snapshotsForLines(
+  lines: RetailCheckoutLine[]
+): Promise<Map<number, HeartlandItemQty>> {
+  const map = new Map<number, HeartlandItemQty>();
+  await Promise.all(
+    [...new Set(lines.map((line) => line.heartlandItemId))].map(async (id) => {
+      map.set(id, await getItemInventorySnapshot(id));
     })
-    .filter((line) => line.quantity > 0);
+  );
+  return map;
 }
 
 async function findInventoryAdjustmentReasonId(): Promise<number> {
@@ -1106,15 +1113,17 @@ async function completeInventoryAdjustment(lines: RetailCheckoutLine[]): Promise
 }
 
 /**
- * Refund path: void leftover sales orders (releases committed qty),
- * create a completed Return for sold units, then adjust on-hand if qty
- * is still short.
+ * Refund path: void leftover sales orders (releases committed qty).
+ * Add on-hand only when the unit was actually sold — never while qty is
+ * still committed, and never a second time for the same shortfall.
  */
 export async function restockRetailInventory(input: {
   email: string;
   fullName: string;
   lines: RetailCheckoutLine[];
   existingSalesOrderId?: number | null;
+  /** False on already-refunded orders so Put stock back cannot add on-hand again. */
+  allowOnHandIncrease?: boolean;
 }): Promise<{
   returnTicketId: number | null;
   voidedOrderIds: number[];
@@ -1122,7 +1131,7 @@ export async function restockRetailInventory(input: {
 }> {
   const itemIds = new Set(input.lines.map((line) => line.heartlandItemId));
   const voidedOrderIds: number[] = [];
-  const before = await qtyForLines(input.lines);
+  const before = await snapshotsForLines(input.lines);
   const customerId = await upsertCustomerByEmail({
     email: input.email,
     fullName: input.fullName,
@@ -1156,33 +1165,49 @@ export async function restockRetailInventory(input: {
     }
   }
 
+  const allowOnHandIncrease = input.allowOnHandIncrease !== false;
+  const afterVoid = await snapshotsForLines(input.lines);
+  const soldShortfall = allowOnHandIncrease
+    ? input.lines.filter((line) => {
+        const start = before.get(line.heartlandItemId);
+        const now = afterVoid.get(line.heartlandItemId);
+        if (!start || !now) return false;
+        if (now.committed > 0) return false;
+        if (now.available > start.available) return false;
+        if (now.onHand > start.onHand) return false;
+        return now.available === start.available && now.onHand === start.onHand;
+      })
+    : [];
+
   let returnTicketId: number | null = null;
-  let afterVoid = await qtyForLines(input.lines);
-  if (shortfallQty(input.lines, before, afterVoid).length > 0 && input.lines.length > 0) {
+  let adjustmentSetId: number | null = null;
+  if (soldShortfall.length > 0) {
     try {
       returnTicketId = await createRetailReturn({
         customerId,
-        lines: input.lines,
+        lines: soldShortfall,
         parentInvoiceId,
       });
     } catch (err) {
       console.error("Heartland Retail return ticket failed:", err);
     }
-  }
 
-  let afterReturn = await qtyForLines(input.lines);
-  const stillShort = shortfallQty(input.lines, before, afterReturn);
-  let adjustmentSetId: number | null = null;
-  if (stillShort.length > 0) {
-    adjustmentSetId = await completeInventoryAdjustment(stillShort);
-    afterReturn = await qtyForLines(input.lines);
-  }
-
-  const remaining = shortfallQty(input.lines, before, afterReturn);
-  if (remaining.length > 0) {
-    throw new Error(
-      `Heartland qty did not come back for item ${remaining.map((line) => line.heartlandItemId).join(", ")}.`
-    );
+    const afterReturn = await snapshotsForLines(soldShortfall);
+    const stillSold = soldShortfall.filter((line) => {
+      const start = before.get(line.heartlandItemId);
+      const now = afterReturn.get(line.heartlandItemId);
+      return Boolean(start && now && now.committed === 0 && now.onHand < start.onHand);
+    });
+    if (stillSold.length > 0) {
+      adjustmentSetId = await completeInventoryAdjustment(
+        stillSold.map((line) => {
+          const start = before.get(line.heartlandItemId);
+          const now = afterReturn.get(line.heartlandItemId);
+          const missing = Math.max(0, (start?.onHand ?? 0) - (now?.onHand ?? 0));
+          return { ...line, quantity: missing || line.quantity };
+        })
+      );
+    }
   }
 
   return { returnTicketId, voidedOrderIds, adjustmentSetId };
