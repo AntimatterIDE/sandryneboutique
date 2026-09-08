@@ -922,8 +922,9 @@ export async function refundOrder(orderId: string): Promise<ActionResult> {
   }
   return {
     ok: true,
-    message:
-      "Card refunded. Heartland recorded a return and inventory was restocked on the site and in Retail.",
+    message: result.message?.toLowerCase().includes("already")
+      ? "Heartland already had a return on this card. The order is now marked refunded and inventory was restocked."
+      : "Card refunded. Heartland recorded a return and inventory was restocked on the site and in Retail.",
   };
 }
 

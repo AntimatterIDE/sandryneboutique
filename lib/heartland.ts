@@ -335,6 +335,34 @@ function isAlreadyReleased(status?: string): boolean {
   );
 }
 
+function resultText(result: ChargeResult): string {
+  return `${result.responseCode ?? ""} ${result.message ?? ""}`.toLowerCase();
+}
+
+/** Portico blocks void/reverse after any CreditReturn is tied to the sale. */
+function isExistingReturnError(result: ChargeResult): boolean {
+  const text = resultText(result);
+  return text.includes("return against it") || text.includes("has a return");
+}
+
+function isZeroSettlementReturnError(result: ChargeResult): boolean {
+  const text = resultText(result);
+  return (
+    text.includes("exceeds the original settlement") ||
+    text.includes("return amount is zero") ||
+    text.includes("gateway response: 6")
+  );
+}
+
+function alreadyReturnedResult(transactionId: string): ChargeResult {
+  return {
+    ok: true,
+    transactionId,
+    responseCode: "00",
+    message: "Heartland already has a return on this charge.",
+  };
+}
+
 async function lookupPorticoTransaction(transactionId: string): Promise<PorticoTxnSnapshot | null> {
   ensureConfigured();
   try {
@@ -366,20 +394,19 @@ export async function returnCardFunds(
 
   const snapshot = await lookupPorticoTransaction(transactionId);
   if (snapshot && isAlreadyReleased(snapshot.status)) {
-    return {
-      ok: true,
-      transactionId,
-      responseCode: "00",
-      message: "This charge was already voided or reversed on Heartland.",
-    };
+    return alreadyReturnedResult(transactionId);
+  }
+
+  const settlement = Number(snapshot?.settlementAmount);
+  const settlementKnown = Number.isFinite(settlement);
+  if (settlementKnown && settlement <= 0) {
+    return alreadyReturnedResult(transactionId);
   }
 
   const reverseAmount = moneyString(snapshot?.authorizedAmount, dollars);
-  const settlement = Number(snapshot?.settlementAmount);
-  const refundAmount =
-    Number.isFinite(settlement) && settlement > 0
-      ? moneyString(Math.min(dollars, settlement), dollars)
-      : moneyString(dollars, dollars);
+  const refundAmount = settlementKnown
+    ? moneyString(Math.min(dollars, settlement), dollars)
+    : moneyString(dollars, dollars);
   const status = parsePorticoStatus(snapshot?.status);
   const settled = status === "C" || status === "CLEARED" || status === "CLOSED";
 
@@ -389,19 +416,16 @@ export async function returnCardFunds(
     const voided = await voidTransaction(transactionId);
     attempts.push(voided);
     if (voided.ok) return voided;
+    if (isExistingReturnError(voided)) return alreadyReturnedResult(transactionId);
 
     const reversed = await reverseTransaction(transactionId, reverseAmount);
     attempts.push(reversed);
     if (reversed.ok) return reversed;
+    if (isExistingReturnError(reversed)) return alreadyReturnedResult(transactionId);
 
     const again = await lookupPorticoTransaction(transactionId);
-    if (again && isAlreadyReleased(again.status)) {
-      return {
-        ok: true,
-        transactionId,
-        responseCode: "00",
-        message: "This charge was already voided or reversed on Heartland.",
-      };
+    if (again && (isAlreadyReleased(again.status) || Number(again.settlementAmount) <= 0)) {
+      return alreadyReturnedResult(transactionId);
     }
   }
 
@@ -409,6 +433,9 @@ export async function returnCardFunds(
     const refunded = await refundTransaction(transactionId, refundAmount);
     attempts.push(refunded);
     if (refunded.ok) return refunded;
+    if (isExistingReturnError(refunded) || isZeroSettlementReturnError(refunded)) {
+      return alreadyReturnedResult(transactionId);
+    }
   }
 
   console.error("Heartland returnCardFunds failed:", {
@@ -419,14 +446,11 @@ export async function returnCardFunds(
     attempts: attempts.map((result) => result.message),
   });
 
-  const detail = attempts
-    .map((result) => result.message)
-    .filter((message): message is string => Boolean(message))
-    .join(" ");
+  const last = [...attempts].reverse().find((result) => result.message);
   return {
     ok: false,
-    message: detail || "We couldn't return this charge. Please try again.",
-    responseCode: attempts.find((result) => result.responseCode)?.responseCode,
+    message: last?.message || "We couldn't return this charge. Please try again.",
+    responseCode: last?.responseCode,
   };
 }
 
