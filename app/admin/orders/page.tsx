@@ -160,6 +160,24 @@ export default async function AdminOrdersPage({
                         </li>
                         );
                       })}
+                      <li className="flex justify-between text-sm pt-2 border-t border-foreground/8">
+                        <span className="text-muted-foreground">Shipping</span>
+                        <span className="tabular-nums">
+                          {Number(order.shipping_amount ?? 0) === 0
+                            ? "Free"
+                            : formatPrice(Number(order.shipping_amount))}
+                        </span>
+                      </li>
+                      <li className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Tax</span>
+                        <span className="tabular-nums">
+                          {formatPrice(Number(order.tax_amount ?? 0))}
+                        </span>
+                      </li>
+                      <li className="flex justify-between text-sm font-medium pt-2 border-t border-foreground/8">
+                        <span>Charged total</span>
+                        <span className="tabular-nums">{formatPrice(order.total_amount)}</span>
+                      </li>
                     </ul>
 
                     <h3 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground mt-6 mb-2">
@@ -221,16 +239,6 @@ export default async function AdminOrdersPage({
                       </h3>
                       <p className="text-xs font-mono break-all">{order.id}</p>
                     </div>
-                    {(order.tax_amount != null || order.shipping_amount != null) && (
-                      <div className="text-xs text-muted-foreground space-y-1">
-                        {order.shipping_amount != null && (
-                          <p>Shipping {formatPrice(Number(order.shipping_amount))}</p>
-                        )}
-                        {order.tax_amount != null && (
-                          <p>Tax {formatPrice(Number(order.tax_amount))}</p>
-                        )}
-                      </div>
-                    )}
                     <OrderTools order={order} labelsEnabled={shippingLabelsConfigured()} />
                   </div>
                 </div>
