@@ -4,7 +4,14 @@ import { revalidatePath } from "next/cache";
 import { createPrivilegedClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSessionInfo } from "@/lib/auth";
-import { ORDER_STATUSES, isOrderInventoryRestocked, isOrderReturned, type OrderStatus } from "@/lib/types";
+import {
+  ORDER_STATUSES,
+  formatPrice,
+  isOrderInventoryRestocked,
+  isOrderReturned,
+  orderRefundBreakdown,
+  type OrderStatus,
+} from "@/lib/types";
 
 export interface ActionResult {
   ok: boolean;
@@ -877,11 +884,20 @@ export async function refundOrder(orderId: string): Promise<ActionResult> {
   }
 
   const { returnCardFunds } = await import("@/lib/heartland");
-  const remaining = Math.round((Number(order.total_amount) - Number(order.refunded_amount ?? 0)) * 100) / 100;
+  const money = orderRefundBreakdown(order);
+  const remaining = money.refundable;
   if (remaining <= 0) {
-    return { ok: false, message: "This order was already refunded." };
+    return {
+      ok: false,
+      message:
+        money.shippingKept > 0
+          ? "Merchandise is already refunded. Shipping stays charged."
+          : "This order was already refunded.",
+    };
   }
-  const result = await returnCardFunds(order.heartland_transaction_id, remaining);
+  const result = await returnCardFunds(order.heartland_transaction_id, remaining, {
+    preserveRemainder: money.shippingKept > 0,
+  });
   if (!result.ok) {
     return { ok: false, message: result.message ?? "Refund failed." };
   }
@@ -893,7 +909,7 @@ export async function refundOrder(orderId: string): Promise<ActionResult> {
     .from("orders")
     .update({
       status: "returned",
-      refunded_amount: remaining,
+      refunded_amount: Math.round((money.alreadyRefunded + remaining) * 100) / 100,
       refunded_at: refundedAt,
       heartland_sync_status: "synced",
       heartland_sync_error: restock.ok ? null : restock.detail.slice(0, 1000),
@@ -919,14 +935,16 @@ export async function refundOrder(orderId: string): Promise<ActionResult> {
   if (!restock.ok) {
     return {
       ok: true,
-      message: `Card refunded, but Heartland stock was not put back: ${restock.detail}`,
+      message: `Card refunded${money.shippingKept > 0 ? ` (shipping ${formatPrice(money.shippingKept)} kept)` : ""}, but Heartland stock was not put back: ${restock.detail}`,
     };
   }
+  const shippingNote =
+    money.shippingKept > 0 ? ` Shipping ${formatPrice(money.shippingKept)} was kept.` : "";
   return {
     ok: true,
     message: result.message?.toLowerCase().includes("already")
-      ? "Heartland already had a return on this card. The order is now marked refunded and inventory was restocked."
-      : "Card refunded. Heartland recorded a return and inventory was restocked on the site and in Retail.",
+      ? `Heartland already had a return on this card. The order is now marked refunded and inventory was restocked.${shippingNote}`
+      : `Card refunded ${formatPrice(remaining)}. Inventory was restocked.${shippingNote}`,
   };
 }
 
@@ -1085,7 +1103,14 @@ export async function buyOrderShippingLabel(
 
   try {
     const { buyUpsShippingLabel } = await import("@/lib/shipping-label");
-    const label = await buyUpsShippingLabel(order.shipping_address, serviceCode);
+    const paidCode =
+      typeof order.shipping_service_code === "string" && order.shipping_service_code.trim()
+        ? order.shipping_service_code.trim()
+        : "03";
+    const label = await buyUpsShippingLabel(
+      order.shipping_address,
+      serviceCode.trim() || paidCode
+    );
     await supabase
       .from("orders")
       .update({

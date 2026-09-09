@@ -202,6 +202,26 @@ export function orderMoneyBreakdown(order: Pick<Order, "items" | "total_amount" 
   return { merchandise, shipping, tax, total };
 }
 
+/** Merchandise + tax can be refunded. Shipping the customer paid stays with the boutique. */
+export function orderRefundBreakdown(
+  order: Pick<Order, "items" | "total_amount" | "tax_amount" | "shipping_amount" | "refunded_amount">
+): {
+  merchandise: number;
+  shipping: number;
+  tax: number;
+  total: number;
+  refundable: number;
+  shippingKept: number;
+  alreadyRefunded: number;
+} {
+  const money = orderMoneyBreakdown(order);
+  const alreadyRefunded = Math.round(Number(order.refunded_amount ?? 0) * 100) / 100;
+  const shippingKept = money.shipping;
+  const refundableTotal = Math.max(0, Math.round((money.total - shippingKept) * 100) / 100);
+  const refundable = Math.max(0, Math.round((refundableTotal - alreadyRefunded) * 100) / 100);
+  return { ...money, refundable, shippingKept, alreadyRefunded };
+}
+
 /** Effective selling price (sale price when on sale). */
 export function effectivePrice(p: Pick<Product, "price" | "on_sale" | "sale_price">): number {
   return p.on_sale && p.sale_price != null ? p.sale_price : p.price;

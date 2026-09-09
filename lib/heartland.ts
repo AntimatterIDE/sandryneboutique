@@ -385,13 +385,15 @@ async function lookupPorticoTransaction(transactionId: string): Promise<PorticoT
  */
 export async function returnCardFunds(
   transactionId: string,
-  amount: number
+  amount: number,
+  options?: { preserveRemainder?: boolean }
 ): Promise<ChargeResult> {
   const dollars = Math.round(amount * 100) / 100;
   if (!Number.isFinite(dollars) || dollars <= 0) {
     return { ok: false, message: "There is no remaining amount to return on this card." };
   }
 
+  const preserveRemainder = Boolean(options?.preserveRemainder);
   const snapshot = await lookupPorticoTransaction(transactionId);
   if (snapshot && isAlreadyReleased(snapshot.status)) {
     return alreadyReturnedResult(transactionId);
@@ -403,7 +405,10 @@ export async function returnCardFunds(
     return alreadyReturnedResult(transactionId);
   }
 
-  const reverseAmount = moneyString(snapshot?.authorizedAmount, dollars);
+  // Full reverse/void would also return shipping. Keep a partial amount authorized.
+  const reverseAmount = preserveRemainder
+    ? moneyString(dollars, dollars)
+    : moneyString(snapshot?.authorizedAmount, dollars);
   const refundAmount = settlementKnown
     ? moneyString(Math.min(dollars, settlement), dollars)
     : moneyString(dollars, dollars);
@@ -413,10 +418,12 @@ export async function returnCardFunds(
   const attempts: ChargeResult[] = [];
 
   if (!settled) {
-    const voided = await voidTransaction(transactionId);
-    attempts.push(voided);
-    if (voided.ok) return voided;
-    if (isExistingReturnError(voided)) return alreadyReturnedResult(transactionId);
+    if (!preserveRemainder) {
+      const voided = await voidTransaction(transactionId);
+      attempts.push(voided);
+      if (voided.ok) return voided;
+      if (isExistingReturnError(voided)) return alreadyReturnedResult(transactionId);
+    }
 
     const reversed = await reverseTransaction(transactionId, reverseAmount);
     attempts.push(reversed);
@@ -449,7 +456,9 @@ export async function returnCardFunds(
   const last = [...attempts].reverse().find((result) => result.message);
   return {
     ok: false,
-    message: last?.message || "We couldn't return this charge. Please try again.",
+    message: preserveRemainder
+      ? "This sale may still be settling. Wait until it batches (usually overnight), then refund merchandise only so shipping stays charged."
+      : last?.message || "We couldn't return this charge. Please try again.",
     responseCode: last?.responseCode,
   };
 }

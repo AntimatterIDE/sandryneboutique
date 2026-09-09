@@ -166,6 +166,9 @@ export default async function AdminOrdersPage({
                         <span className="text-muted-foreground">
                           Shipping
                           {order.shipping_service ? ` · ${order.shipping_service}` : ""}
+                          {isOrderReturned(order) && money.shipping > 0
+                            ? " (kept on refund)"
+                            : " (paid at checkout)"}
                         </span>
                         <span className="tabular-nums">
                           {money.shipping === 0 ? "Free" : formatPrice(money.shipping)}
