@@ -9,11 +9,10 @@ import {
   buyOrderShippingLabel,
   quoteOrderShipping,
   refundOrder,
-  restockOrderInventory,
   saveOrderTracking,
 } from "@/app/admin/actions";
 import type { Order } from "@/lib/types";
-import { isOrderInventoryRestocked, isOrderReturned } from "@/lib/types";
+import { isOrderReturned } from "@/lib/types";
 
 export function OrderTools({
   order,
@@ -28,7 +27,6 @@ export function OrderTools({
   const [carrier, setCarrier] = useState(order.tracking_carrier ?? "UPS");
   const [rates, setRates] = useState<{ code: string; name: string; amount: string }[]>([]);
   const [refundedLocal, setRefundedLocal] = useState(false);
-  const [restockedLocal, setRestockedLocal] = useState(false);
 
   const run = (fn: () => Promise<{ ok: boolean; message: string; labelUrl?: string; rates?: { code: string; name: string; amount: string }[] }>) => {
     startTransition(async () => {
@@ -38,14 +36,6 @@ export function OrderTools({
         if (result.rates) setRates(result.rates);
         if (result.labelUrl) window.open(result.labelUrl, "_blank", "noopener,noreferrer");
         if (result.message.toLowerCase().includes("refund")) setRefundedLocal(true);
-        if (
-          result.message.toLowerCase().includes("already put back") ||
-          result.message.toLowerCase().includes("already back") ||
-          result.message.toLowerCase().includes("not increased") ||
-          result.message.toLowerCase().includes("was put back")
-        ) {
-          setRestockedLocal(true);
-        }
       } else {
         toast.error(result.message);
         if (result.message.toLowerCase().includes("already refunded")) setRefundedLocal(true);
@@ -55,7 +45,6 @@ export function OrderTools({
   };
 
   const refunded = refundedLocal || isOrderReturned(order) || order.status === "cancelled";
-  const restocked = restockedLocal || isOrderInventoryRestocked(order);
   const shipped = order.status === "shipped" || Boolean(order.tracking_number);
 
   return (
@@ -80,54 +69,26 @@ export function OrderTools({
                 ? ` on ${new Date(order.refunded_at).toLocaleDateString()}`
                 : " This card has already been refunded."}
             </p>
-            {restocked ? (
-              <p className="text-xs text-muted-foreground">Stock for this order is already back.</p>
-            ) : (
-              <Button
-                type="button"
-                variant="outline"
-                disabled={pending}
-                onClick={() => run(() => restockOrderInventory(order.id))}
-                className="rounded-none tracking-[0.12em] uppercase text-xs"
-              >
-                Put stock back
-              </Button>
-            )}
           </div>
         ) : (
-          <div className="space-y-2">
-            <Button
-              type="button"
-              variant="outline"
-              disabled={pending || !order.heartland_transaction_id}
-              onClick={() => {
-                if (
-                  !confirm(
-                    "Refund the card and create a Heartland return so this item goes back into inventory?"
-                  )
-                ) {
-                  return;
-                }
-                run(() => refundOrder(order.id));
-              }}
-              className="rounded-none tracking-[0.12em] uppercase text-xs"
-            >
-              Refund card
-            </Button>
-            {restocked ? (
-              <p className="text-xs text-muted-foreground">Stock for this order is already back.</p>
-            ) : (
-              <Button
-                type="button"
-                variant="outline"
-                disabled={pending}
-                onClick={() => run(() => restockOrderInventory(order.id))}
-                className="rounded-none tracking-[0.12em] uppercase text-xs"
-              >
-                Put stock back
-              </Button>
-            )}
-          </div>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={pending || !order.heartland_transaction_id}
+            onClick={() => {
+              if (
+                !confirm(
+                  "Refund this card? Heartland inventory will update automatically."
+                )
+              ) {
+                return;
+              }
+              run(() => refundOrder(order.id));
+            }}
+            className="rounded-none tracking-[0.12em] uppercase text-xs"
+          >
+            Refund card
+          </Button>
         )}
       </div>
 

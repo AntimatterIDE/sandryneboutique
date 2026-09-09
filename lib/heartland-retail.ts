@@ -1122,7 +1122,7 @@ export async function restockRetailInventory(input: {
   fullName: string;
   lines: RetailCheckoutLine[];
   existingSalesOrderId?: number | null;
-  /** False on already-refunded orders so Put stock back cannot add on-hand again. */
+  /** False when the order was already refunded so on-hand is not increased twice. */
   allowOnHandIncrease?: boolean;
 }): Promise<{
   returnTicketId: number | null;

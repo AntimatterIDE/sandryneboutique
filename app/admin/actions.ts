@@ -973,38 +973,6 @@ async function restockOrderInHeartlandAndSite(
   }
 }
 
-export async function restockOrderInventory(orderId: string): Promise<ActionResult> {
-  const denied = await requireAdmin();
-  if (denied) return denied;
-
-  const supabase = await createPrivilegedClient();
-  const { data: order, error } = await supabase.from("orders").select("*").eq("id", orderId).single();
-  if (error || !order) return { ok: false, message: "Order not found." };
-  if (isOrderInventoryRestocked(order)) {
-    return { ok: true, message: "Stock for this order was already put back. It will not be added again." };
-  }
-
-  const alreadyRefunded = isOrderReturned(order) || order.status === "cancelled";
-  const restock = await restockOrderInHeartlandAndSite(supabase, order, {
-    allowOnHandIncrease: !alreadyRefunded,
-  });
-  if (restock.ok) {
-    await markInventoryRestocked(supabase, orderId);
-  }
-  revalidatePath("/admin/orders");
-  revalidatePath("/shop");
-  for (const item of restock.items) {
-    if (item.slug) revalidatePath(`/products/${item.slug}`);
-  }
-  if (!restock.ok) return { ok: false, message: restock.detail };
-  return {
-    ok: true,
-    message: alreadyRefunded
-      ? "Leftover Heartland holds were released. On-hand was not increased again for this refunded order."
-      : "Heartland quantity was put back and the site inventory was updated.",
-  };
-}
-
 export async function retryRetailSync(orderId: string): Promise<ActionResult> {
   const denied = await requireAdmin();
   if (denied) return denied;
