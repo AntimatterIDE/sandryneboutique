@@ -510,53 +510,28 @@ export async function getItemQtyAvailable(itemId: number): Promise<number> {
 }
 
 /**
- * Map of item_id → qty_available for the given ids.
- * Pages through inventory values grouped by item_id.
+ * Map of item_id → qty_available for the given ids (web location).
+ * Failed lookups are omitted so callers do not zero website stock on a blip.
  */
 export async function getInventoryByItemIds(
   itemIds: number[]
 ): Promise<Map<number, number>> {
-  const wanted = new Set(itemIds);
+  const wanted = [...new Set(itemIds.filter((id) => Number.isInteger(id) && id > 0))];
   const map = new Map<number, number>();
-  if (wanted.size === 0) return map;
+  if (wanted.length === 0) return map;
 
-  // Prefer per-item lookups when the set is small (admin / checkout).
-  if (wanted.size <= 25) {
+  const BATCH = 20;
+  for (let i = 0; i < wanted.length; i += BATCH) {
+    const chunk = wanted.slice(i, i + BATCH);
     await Promise.all(
-      [...wanted].map(async (id) => {
+      chunk.map(async (id) => {
         try {
           map.set(id, await getItemQtyAvailable(id));
         } catch (err) {
           console.error(`Retail inventory lookup failed for item ${id}:`, err);
-          map.set(id, 0);
         }
       })
     );
-    return map;
-  }
-
-  let page = 1;
-  let pages = 1;
-  while (page <= pages) {
-    const params = new URLSearchParams();
-    params.append("group[]", "item_id");
-    params.set("per_page", "100");
-    params.set("page", String(page));
-    const { body } = await retailFetch(`/inventory/values?${params.toString()}`);
-    const result = body as SearchResult<HeartlandInventoryValue>;
-    pages = result.pages || 1;
-    for (const row of result.results ?? []) {
-      if (wanted.has(row.item_id)) {
-        const prev = map.get(row.item_id) ?? 0;
-        map.set(row.item_id, prev + inventoryRowQty(row));
-      }
-    }
-    page += 1;
-    if (map.size >= wanted.size) break;
-  }
-
-  for (const id of wanted) {
-    if (!map.has(id)) map.set(id, 0);
   }
   return map;
 }

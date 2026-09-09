@@ -1037,6 +1037,44 @@ export async function retryRetailSync(orderId: string): Promise<ActionResult> {
   return { ok: true, message: `Retail sales order ${result.salesOrderId} created. Inventory should drop in Heartland.` };
 }
 
+export async function syncInventoryFromHeartland(): Promise<ActionResult> {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  const { heartlandRetailConfigured } = await import("@/lib/heartland-retail");
+  if (!heartlandRetailConfigured()) {
+    return { ok: false, message: "Heartland Retail is not fully configured." };
+  }
+
+  const supabase = await createPrivilegedClient();
+  try {
+    const { revalidateInventoryPages, syncRetailInventoryToSite } = await import(
+      "@/lib/order-inventory"
+    );
+    const result = await syncRetailInventoryToSite(supabase);
+    revalidateInventoryPages();
+    if (result.failures.length > 0) {
+      return {
+        ok: true,
+        message: `Updated ${result.updated} from Heartland. ${result.failures.length} could not be saved.`,
+      };
+    }
+    if (result.updated === 0) {
+      return { ok: true, message: "Website inventory already matches Heartland." };
+    }
+    return {
+      ok: true,
+      message: `Updated ${result.updated} item${result.updated === 1 ? "" : "s"} from Heartland.`,
+    };
+  } catch (err) {
+    console.error("Admin Heartland inventory sync failed:", err);
+    return {
+      ok: false,
+      message: err instanceof Error ? err.message : "Could not pull inventory from Heartland.",
+    };
+  }
+}
+
 export async function saveOrderTracking(
   orderId: string,
   trackingNumber: string,

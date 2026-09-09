@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import {
-  getInventoryByItemIds,
-  heartlandRetailConfigured,
-} from "@/lib/heartland-retail";
+import { heartlandRetailConfigured } from "@/lib/heartland-retail";
+import { revalidateInventoryPages, syncRetailInventoryToSite } from "@/lib/order-inventory";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 function authorized(request: Request): boolean {
   const secret = process.env.CRON_SECRET;
@@ -16,9 +15,8 @@ function authorized(request: Request): boolean {
 }
 
 /**
- * Mirrors Heartland Retail qty_available into product_variants.inventory_count.
- * The product_variants trigger refreshes parent products.inventory_count /
- * sizes / colors.
+ * Mirrors Heartland Retail qty_available onto the website.
+ * Heartland is the source of truth, including manual inventory adjustments.
  *
  * Schedule via vercel.json (every 5 minutes) or call manually:
  *   curl -H "Authorization: Bearer $CRON_SECRET" https://yoursite.com/api/cron/sync-heartland-inventory
@@ -62,82 +60,15 @@ export async function GET(request: Request) {
     }
   }
 
-  const { data: variants, error } = await admin
-    .from("product_variants")
-    .select("id, heartland_item_id, inventory_count")
-    .eq("active", true);
-
-  if (error) {
-    console.error("Inventory sync variant query failed:", error);
-    return NextResponse.json({ ok: false, error: "Variant query failed." }, { status: 500 });
-  }
-
-  const rows = variants ?? [];
-  const skipItemIds = new Set<number>();
-  const { data: failedOrders } = await admin
-    .from("orders")
-    .select("items")
-    .eq("heartland_sync_status", "failed");
-  for (const order of failedOrders ?? []) {
-    const items = (order.items ?? []) as { heartland_item_id?: number | null }[];
-    for (const item of items) {
-      if (typeof item.heartland_item_id === "number") skipItemIds.add(item.heartland_item_id);
-    }
-  }
-
-  const itemIds = [
-    ...new Set(
-      rows
-        .map((v) => v.heartland_item_id as number)
-        .filter((id): id is number => typeof id === "number" && id > 0)
-    ),
-  ];
-
-  if (itemIds.length === 0) {
-    return NextResponse.json({ ok: true, updated: 0, checked: 0 });
-  }
-
-  let qtyByItem: Map<number, number>;
   try {
-    qtyByItem = await getInventoryByItemIds(itemIds);
+    const result = await syncRetailInventoryToSite(admin);
+    if (result.updated > 0) revalidateInventoryPages();
+    return NextResponse.json({ ok: true, ...result });
   } catch (err) {
-    console.error("Heartland Retail inventory fetch failed:", err);
+    console.error("Heartland Retail inventory sync failed:", err);
     return NextResponse.json(
-      { ok: false, error: "Retail inventory fetch failed." },
+      { ok: false, error: err instanceof Error ? err.message : "Retail inventory fetch failed." },
       { status: 502 }
     );
   }
-
-  let updated = 0;
-  const failures: string[] = [];
-
-  for (const variant of rows) {
-    const itemId = variant.heartland_item_id as number;
-    if (skipItemIds.has(itemId)) continue;
-    const qty = qtyByItem.get(itemId);
-    if (qty == null) continue;
-    if (qty === variant.inventory_count) continue;
-
-    const { error: updateError } = await admin
-      .from("product_variants")
-      .update({
-        inventory_count: qty,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", variant.id);
-
-    if (updateError) {
-      failures.push(variant.id);
-      console.error(`Inventory sync update failed for variant ${variant.id}:`, updateError);
-    } else {
-      updated += 1;
-    }
-  }
-
-  return NextResponse.json({
-    ok: true,
-    checked: rows.length,
-    updated,
-    failures: failures.length,
-  });
 }

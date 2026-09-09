@@ -6,6 +6,7 @@ import { Suspense } from "react";
 import { Plus } from "lucide-react";
 import { ensureProductFromHeartland } from "@/app/admin/actions";
 import { ProductsToolbar } from "@/components/admin/products-toolbar";
+import { SyncHeartlandInventoryButton } from "@/components/admin/sync-heartland-inventory-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CatalogPagination } from "@/components/ui/catalog-pagination";
@@ -211,10 +212,12 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
             {total} {total === 1 ? "product" : "products"}
             {q || category !== "all" || stock !== "all" || image !== "all"
               ? " matching filters"
-              : " in the catalog"}.
+              : " in the catalog"}
+            . Inventory follows Heartland (auto every 5 minutes).
           </p>
         </div>
         <div className="flex flex-col gap-2 w-full sm:w-auto sm:flex-row">
+          <SyncHeartlandInventoryButton />
           <Button
             asChild
             variant="outline"
