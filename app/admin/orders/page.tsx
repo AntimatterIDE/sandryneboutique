@@ -163,7 +163,10 @@ export default async function AdminOrdersPage({
                         );
                       })}
                       <li className="flex justify-between text-sm pt-2 border-t border-foreground/8">
-                        <span className="text-muted-foreground">Shipping</span>
+                        <span className="text-muted-foreground">
+                          Shipping
+                          {order.shipping_service ? ` · ${order.shipping_service}` : ""}
+                        </span>
                         <span className="tabular-nums">
                           {money.shipping === 0 ? "Free" : formatPrice(money.shipping)}
                         </span>

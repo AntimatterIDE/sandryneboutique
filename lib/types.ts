@@ -146,6 +146,8 @@ export interface Order {
   heartland_sync_error?: string | null;
   tax_amount?: number | null;
   shipping_amount?: number | null;
+  shipping_service?: string | null;
+  shipping_service_code?: string | null;
   tracking_number?: string | null;
   tracking_carrier?: string | null;
   shipping_label_url?: string | null;

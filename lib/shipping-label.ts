@@ -279,6 +279,12 @@ export async function buyUpsShippingLabel(
   };
 }
 
+const CHECKOUT_SERVICE_CODES = new Set(["01", "02", "03", "12", "13", "14", "59"]);
+
+export function isFreeEligibleUpsService(code: string): boolean {
+  return code === "03" || code === "flat";
+}
+
 function serviceName(code: string): string {
   switch (code) {
     case "01":
@@ -293,7 +299,44 @@ function serviceName(code: string): string {
       return "Next Day Air Saver";
     case "14":
       return "Next Day Air Early";
+    case "59":
+      return "2nd Day Air A.M.";
     default:
       return `Service ${code}`;
   }
+}
+
+function displayServiceName(code: string, raw?: string): string {
+  const mapped = serviceName(code);
+  if (!mapped.startsWith("Service")) return `UPS ${mapped}`;
+  if (raw?.trim()) return raw.startsWith("UPS") ? raw : `UPS ${raw}`;
+  return `UPS ${mapped}`;
+}
+
+export async function quoteCheckoutShippingOptions(shipping: ShippingAddress): Promise<{
+  amount: number;
+  code: string;
+  name: string;
+}[]> {
+  const rates = await quoteUpsRates(shipping);
+  const preferred = rates.filter((row) => CHECKOUT_SERVICE_CODES.has(row.code));
+  const list = (preferred.length > 0 ? preferred : rates)
+    .map((row) => {
+      const amount = Math.round(Number(row.amount) * 100) / 100;
+      return {
+        amount,
+        code: row.code,
+        name: displayServiceName(row.code, row.name),
+      };
+    })
+    .filter((row) => Number.isFinite(row.amount) && row.amount >= 0);
+
+  const seen = new Set<string>();
+  return list
+    .filter((row) => {
+      if (seen.has(row.code)) return false;
+      seen.add(row.code);
+      return true;
+    })
+    .sort((a, b) => a.amount - b.amount);
 }

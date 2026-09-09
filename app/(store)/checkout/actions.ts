@@ -43,14 +43,21 @@ export interface CheckoutInput {
   lines: CheckoutLine[];
   discountCode?: string | null;
   captchaToken?: string | null;
+  shippingServiceCode?: string | null;
 }
 
 export type CheckoutResult =
   | { ok: true; orderId: string }
   | { ok: false; error: string };
 
+export type CheckoutShippingOption = {
+  amount: number;
+  service: string;
+  code: string;
+};
+
 export type CheckoutShippingQuote =
-  | { ok: true; amount: number; service: string; code: string }
+  | { ok: true; rates: CheckoutShippingOption[] }
   | { ok: false; error: string };
 
 export async function quoteCheckoutShipping(shipping: ShippingAddress): Promise<CheckoutShippingQuote> {
@@ -58,14 +65,24 @@ export async function quoteCheckoutShipping(shipping: ShippingAddress): Promise<
     return { ok: false, error: "Enter a complete shipping address to calculate shipping." };
   }
 
-  const { shippingLabelsConfigured, quoteCheckoutGroundRate } = await import("@/lib/shipping-label");
+  const { shippingLabelsConfigured, quoteCheckoutShippingOptions } = await import("@/lib/shipping-label");
   if (!shippingLabelsConfigured()) {
-    return { ok: true, amount: FLAT_SHIPPING_RATE, service: "Standard", code: "flat" };
+    return { ok: true, rates: [{ amount: FLAT_SHIPPING_RATE, service: "Standard", code: "flat" }] };
   }
 
   try {
-    const quote = await quoteCheckoutGroundRate(shipping);
-    return { ok: true, amount: quote.amount, service: quote.name, code: quote.code };
+    const options = await quoteCheckoutShippingOptions(shipping);
+    if (options.length === 0) {
+      return { ok: false, error: "Could not calculate shipping for this address." };
+    }
+    return {
+      ok: true,
+      rates: options.map((option) => ({
+        amount: option.amount,
+        service: option.name,
+        code: option.code,
+      })),
+    };
   } catch (err) {
     return {
       ok: false,
@@ -74,19 +91,38 @@ export async function quoteCheckoutShipping(shipping: ShippingAddress): Promise<
   }
 }
 
-async function resolveCheckoutShipping(shipping: ShippingAddress, discountedSubtotal: number): Promise<number> {
+async function resolveCheckoutShipping(
+  shipping: ShippingAddress,
+  discountedSubtotal: number,
+  serviceCode?: string | null
+): Promise<{ amount: number; service: string; code: string }> {
   const fallback = shippingForSubtotal(discountedSubtotal);
-  if (fallback === 0) return 0;
+  const { shippingLabelsConfigured, quoteCheckoutShippingOptions, isFreeEligibleUpsService } =
+    await import("@/lib/shipping-label");
 
-  const { shippingLabelsConfigured, quoteCheckoutGroundRate } = await import("@/lib/shipping-label");
-  if (!shippingLabelsConfigured()) return fallback;
+  if (!shippingLabelsConfigured()) {
+    const code = serviceCode?.trim() || "flat";
+    return { amount: fallback, service: fallback === 0 ? "Free" : "Standard", code };
+  }
 
   try {
-    const quote = await quoteCheckoutGroundRate(shipping);
-    return quote.amount;
+    const options = await quoteCheckoutShippingOptions(shipping);
+    const selected =
+      options.find((option) => option.code === serviceCode) ??
+      options.find((option) => option.code === "03") ??
+      options[0];
+    if (!selected) {
+      return { amount: fallback, service: fallback === 0 ? "Free" : "Standard", code: "flat" };
+    }
+    const freeEligible = fallback === 0 && isFreeEligibleUpsService(selected.code);
+    return {
+      amount: freeEligible ? 0 : selected.amount,
+      service: freeEligible ? `${selected.name} (Free)` : selected.name,
+      code: selected.code,
+    };
   } catch (err) {
     console.warn("Checkout UPS quote failed; using standard shipping:", err);
-    return fallback;
+    return { amount: fallback, service: fallback === 0 ? "Free" : "Standard", code: "flat" };
   }
 }
 
@@ -284,7 +320,12 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
   }
 
   const discountedSubtotal = Math.max(0, Math.round((subtotal - discount) * 100) / 100);
-  const shippingCost = await resolveCheckoutShipping(input.shipping, discountedSubtotal);
+  const shippingQuote = await resolveCheckoutShipping(
+    input.shipping,
+    discountedSubtotal,
+    input.shippingServiceCode
+  );
+  const shippingCost = shippingQuote.amount;
   const { tax, total } = checkoutTotals({
     subtotal,
     discount,
@@ -327,6 +368,8 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
     heartland_sync_status: heartlandRetailConfigured() ? "pending" : null,
     tax_amount: tax,
     shipping_amount: shippingCost,
+    shipping_service: shippingQuote.service,
+    shipping_service_code: shippingQuote.code,
     shipping_address: input.shipping,
     items: orderItems,
   };
@@ -338,7 +381,15 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
     .single();
 
   if (orderError) {
-    const { tax_amount: _tax, shipping_amount: _ship, ...legacyPayload } = orderPayload;
+    const {
+      tax_amount: _tax,
+      shipping_amount: _ship,
+      shipping_service: _svc,
+      shipping_service_code: _code,
+      ...legacyPayload
+    } = orderPayload;
+    void _svc;
+    void _code;
     void _tax;
     void _ship;
     const retry = await admin.from("orders").insert(legacyPayload).select("id").single();

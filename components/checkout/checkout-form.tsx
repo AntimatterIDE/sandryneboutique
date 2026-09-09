@@ -19,7 +19,11 @@ import { cartLineKey, cartSubtotal, useCart } from "@/lib/store/cart";
 import { useHydrated } from "@/lib/hooks/use-hydrated";
 import type { ShippingAddress } from "@/lib/types";
 import { formatPrice } from "@/lib/types";
-import { processCheckout, quoteCheckoutShipping } from "@/app/(store)/checkout/actions";
+import {
+  processCheckout,
+  quoteCheckoutShipping,
+  type CheckoutShippingOption,
+} from "@/app/(store)/checkout/actions";
 import { HCaptchaField } from "@/components/checkout/hcaptcha-field";
 
 interface TokenSuccessResponse {
@@ -78,8 +82,8 @@ export function CheckoutForm({
   const [discountInput, setDiscountInput] = useState("");
   const [appliedCode, setAppliedCode] = useState<string | null>(null);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
-  const [quotedShipping, setQuotedShipping] = useState<number | null>(null);
-  const [shippingService, setShippingService] = useState<string | null>(null);
+  const [shippingRates, setShippingRates] = useState<CheckoutShippingOption[]>([]);
+  const [selectedShippingCode, setSelectedShippingCode] = useState<string | null>(null);
   const [quoting, setQuoting] = useState(false);
   const formMounted = useRef(false);
 
@@ -89,7 +93,7 @@ export function CheckoutForm({
   const itemsRef = useRef(items);
   const appliedCodeRef = useRef(appliedCode);
   const captchaTokenRef = useRef(captchaToken);
-  const quotedShippingRef = useRef(quotedShipping);
+  const selectedShippingCodeRef = useRef(selectedShippingCode);
   const quotingRef = useRef(quoting);
   useEffect(() => {
     shippingRef.current = shipping;
@@ -97,9 +101,9 @@ export function CheckoutForm({
     itemsRef.current = items;
     appliedCodeRef.current = appliedCode;
     captchaTokenRef.current = captchaToken;
-    quotedShippingRef.current = quotedShipping;
+    selectedShippingCodeRef.current = selectedShippingCode;
     quotingRef.current = quoting;
-  }, [shipping, billingSameAsShipping, billingLine1, billingPostal, items, appliedCode, captchaToken, quotedShipping, quoting]);
+  }, [shipping, billingSameAsShipping, billingLine1, billingPostal, items, appliedCode, captchaToken, selectedShippingCode, quoting]);
 
   const appliedDiscount = findDiscount(appliedCode);
   const subtotal = cartSubtotal(items);
@@ -107,32 +111,38 @@ export function CheckoutForm({
   const discountedSubtotal = Math.max(0, subtotal - discount);
   const qualifiesFree = discountedSubtotal >= FREE_SHIPPING_THRESHOLD;
   const addressReady = isAddressQuotable(shipping);
-  const shippingReady = qualifiesFree || quotedShipping != null;
+  const selectedRate = shippingRates.find((rate) => rate.code === selectedShippingCode) ?? shippingRates[0] ?? null;
+  const selectedShippingCost =
+    selectedRate == null
+      ? null
+      : qualifiesFree && (selectedRate.code === "03" || selectedRate.code === "flat")
+        ? 0
+        : selectedRate.amount;
+  const shippingReady = selectedShippingCost != null;
   const { shipping: shippingCost, tax, total } = checkoutTotals({
     subtotal,
     discount,
     state: shipping.state,
     postalCode: shipping.postal_code,
-    shippingAmount: qualifiesFree ? 0 : (quotedShipping ?? 0),
+    shippingAmount: selectedShippingCost ?? 0,
   });
+  const shippingService = selectedRate
+    ? selectedShippingCost === 0
+      ? `${selectedRate.service} (Free)`
+      : selectedRate.service
+    : null;
 
   useEffect(() => {
-    if (qualifiesFree) {
-      setQuotedShipping(0);
-      setShippingService("Free");
-      setQuoting(false);
-      return;
-    }
     if (!addressReady) {
-      setQuotedShipping(null);
-      setShippingService(null);
+      setShippingRates([]);
+      setSelectedShippingCode(null);
       setQuoting(false);
       return;
     }
 
     let cancelled = false;
-    setQuotedShipping(null);
-    setShippingService(null);
+    setShippingRates([]);
+    setSelectedShippingCode(null);
     setQuoting(true);
     const timer = window.setTimeout(async () => {
       const result = await quoteCheckoutShipping({
@@ -141,12 +151,14 @@ export function CheckoutForm({
         line2: shipping.line2 || null,
       });
       if (cancelled) return;
-      if (result.ok) {
-        setQuotedShipping(result.amount);
-        setShippingService(result.service);
+      if (result.ok && result.rates.length > 0) {
+        setShippingRates(result.rates);
+        const ground = result.rates.find((rate) => rate.code === "03");
+        const cheapest = result.rates[0];
+        setSelectedShippingCode((qualifiesFree && ground ? ground : cheapest).code);
       } else {
-        setQuotedShipping(FLAT_SHIPPING_RATE);
-        setShippingService("Standard");
+        setShippingRates([{ amount: FLAT_SHIPPING_RATE, service: "Standard", code: "flat" }]);
+        setSelectedShippingCode("flat");
       }
       setQuoting(false);
     }, 700);
@@ -184,13 +196,12 @@ export function CheckoutForm({
       const currentDiscount = findDiscount(appliedCodeRef.current);
       const currentSubtotal = cartSubtotal(currentItems);
       const currentDiscountAmt = currentDiscount ? discountAmount(currentSubtotal, currentDiscount) : 0;
-      const shipsFree = currentSubtotal - currentDiscountAmt >= FREE_SHIPPING_THRESHOLD;
       if (quotingRef.current) {
         toast.error("Hang on — we're calculating shipping for this address.");
         return;
       }
-      if (!shipsFree && quotedShippingRef.current == null) {
-        toast.error("Enter a complete shipping address so we can add shipping and tax before payment.");
+      if (!selectedShippingCodeRef.current) {
+        toast.error("Enter a complete shipping address and choose a shipping option before payment.");
         return;
       }
 
@@ -216,6 +227,7 @@ export function CheckoutForm({
           })),
           discountCode: appliedCodeRef.current,
           captchaToken: captchaTokenRef.current,
+          shippingServiceCode: selectedShippingCodeRef.current,
         });
 
         if (result.ok) {
@@ -324,6 +336,53 @@ export function CheckoutForm({
                 <Input id="country" autoComplete="country-name" value={shipping.country} onChange={update("country")} className="rounded-none" />
               </div>
             </div>
+          </section>
+
+          <section>
+            <h2 className="text-[11px] tracking-[0.22em] uppercase text-muted-foreground mb-5">
+              Shipping method
+            </h2>
+            {!addressReady ? (
+              <p className="text-sm text-muted-foreground">
+                Enter your shipping address to see UPS options and prices.
+              </p>
+            ) : quoting ? (
+              <p className="text-sm text-muted-foreground">Calculating UPS rates…</p>
+            ) : (
+              <div className="space-y-2">
+                {shippingRates.map((rate) => {
+                  const price =
+                    qualifiesFree && (rate.code === "03" || rate.code === "flat") ? 0 : rate.amount;
+                  return (
+                    <label
+                      key={rate.code}
+                      className="flex items-center justify-between gap-4 border border-foreground/15 px-4 py-3 text-sm cursor-pointer has-[:checked]:border-foreground"
+                    >
+                      <span className="flex items-center gap-3 min-w-0">
+                        <input
+                          type="radio"
+                          name="shipping-method"
+                          value={rate.code}
+                          checked={selectedShippingCode === rate.code}
+                          onChange={() => setSelectedShippingCode(rate.code)}
+                          className="size-4 accent-foreground"
+                        />
+                        <span className="truncate">{rate.service}</span>
+                      </span>
+                      <span className="tabular-nums shrink-0">
+                        {price === 0 ? "Free" : formatPrice(price)}
+                      </span>
+                    </label>
+                  );
+                })}
+                {qualifiesFree ? (
+                  <p className="text-[11px] text-muted-foreground leading-relaxed pt-1">
+                    Orders over {formatPrice(FREE_SHIPPING_THRESHOLD)} include free UPS Ground.
+                    Faster options are available at the quoted rate.
+                  </p>
+                ) : null}
+              </div>
+            )}
           </section>
 
           <section>
@@ -546,9 +605,9 @@ export function CheckoutForm({
             </dl>
 
             <p className="mt-6 text-[11px] text-muted-foreground leading-relaxed">
-              Shipping is quoted from your address as UPS Ground. Orders over{" "}
-              {formatPrice(FREE_SHIPPING_THRESHOLD)} ship free. By placing your order you
-              agree to our{" "}
+              Shipping is quoted from your address. Choose Ground or a faster UPS service.
+              Orders over {formatPrice(FREE_SHIPPING_THRESHOLD)} include free Ground. By
+              placing your order you agree to our{" "}
               <Link href="/policies/terms" className="underline underline-offset-2">
                 terms of service
               </Link>
