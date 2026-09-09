@@ -51,7 +51,7 @@ function normalizePostal(zip: string): string {
 
 function shipperAddress() {
   return {
-    AddressLine: ["415 Peachtree Pkwy", "Ste 235"],
+    AddressLine: ["415 Peachtree Parkway", "Ste 235"],
     City: "Cumming",
     StateProvinceCode: "GA",
     PostalCode: "30041",
@@ -125,25 +125,48 @@ function upsHeaders(token: string): HeadersInit {
   };
 }
 
+function rateAmount(row: {
+  TotalCharges?: { MonetaryValue?: string };
+  NegotiatedRateCharges?: { TotalCharge?: { MonetaryValue?: string } };
+}): string {
+  return (
+    row.NegotiatedRateCharges?.TotalCharge?.MonetaryValue ||
+    row.TotalCharges?.MonetaryValue ||
+    "0.00"
+  );
+}
+
 export async function quoteUpsRates(shipping: ShippingAddress): Promise<UpsRate[]> {
   const token = await upsAccessToken();
   const shipper = accountNumber();
+  const origin = shipperAddress();
   const res = await fetch(`${upsBaseUrl()}/api/rating/v2409/Shop`, {
     method: "POST",
     headers: upsHeaders(token),
     body: JSON.stringify({
       RateRequest: {
         Request: { RequestOption: "Shop" },
+        PickupType: { Code: "01" },
+        CustomerClassification: { Code: "00" },
         Shipment: {
           Shipper: {
             Name: "Sandryne Boutique",
             ShipperNumber: shipper,
-            Address: shipperAddress(),
+            Address: origin,
           },
           ShipTo: shipToAddress(shipping),
           ShipFrom: {
             Name: "Sandryne Boutique",
-            Address: shipperAddress(),
+            Address: origin,
+          },
+          PaymentDetails: {
+            ShipmentCharge: {
+              Type: "01",
+              BillShipper: { AccountNumber: shipper },
+            },
+          },
+          ShipmentRatingOptions: {
+            NegotiatedRatesIndicator: "Y",
           },
           Package: packagePayload(),
         },
@@ -155,7 +178,8 @@ export async function quoteUpsRates(shipping: ShippingAddress): Promise<UpsRate[
     RateResponse?: {
       RatedShipment?: {
         Service?: { Code?: string; Description?: string };
-        TotalCharges?: { MonetaryValue?: string; CurrencyCode?: string };
+        TotalCharges?: { MonetaryValue?: string };
+        NegotiatedRateCharges?: { TotalCharge?: { MonetaryValue?: string } };
       }[];
     };
     response?: { errors?: { message?: string }[] };
@@ -170,7 +194,7 @@ export async function quoteUpsRates(shipping: ShippingAddress): Promise<UpsRate[
     .map((row) => ({
       code: row.Service?.Code || "",
       name: row.Service?.Description || serviceName(row.Service?.Code || ""),
-      amount: row.TotalCharges?.MonetaryValue || "0.00",
+      amount: rateAmount(row),
     }))
     .filter((row) => row.code)
     .sort((a, b) => Number(a.amount) - Number(b.amount));
