@@ -39,6 +39,18 @@ export async function signIn(_prev: AuthResult | null, formData: FormData): Prom
     return { ok: false, message: "Invalid email or password." };
   }
 
+  try {
+    const supabaseUser = await supabase.auth.getUser();
+    const userId = supabaseUser.data.user?.id;
+    if (userId) {
+      const { createAdminClient } = await import("@/lib/supabase/admin");
+      const { linkOrdersToCustomer } = await import("@/lib/account-orders");
+      await linkOrdersToCustomer(createAdminClient(), userId, email);
+    }
+  } catch (err) {
+    console.warn("Could not attach guest orders on sign-in:", err);
+  }
+
   revalidatePath("/", "layout");
   redirect(next.startsWith("/") ? next : "/account");
 }
@@ -74,6 +86,13 @@ export async function signUp(_prev: AuthResult | null, formData: FormData): Prom
 
   // If email confirmation is disabled, a session exists and we can continue.
   if (data.session) {
+    try {
+      const { createAdminClient } = await import("@/lib/supabase/admin");
+      const { linkOrdersToCustomer } = await import("@/lib/account-orders");
+      await linkOrdersToCustomer(createAdminClient(), data.session.user.id, email);
+    } catch (err) {
+      console.warn("Could not attach guest orders to new account:", err);
+    }
     revalidatePath("/", "layout");
     redirect("/account");
   }

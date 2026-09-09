@@ -928,9 +928,17 @@ export async function refundOrder(orderId: string): Promise<ActionResult> {
   }
 
   revalidatePath("/admin/orders");
+  revalidatePath("/account");
   revalidatePath("/shop");
   for (const item of restock.items) {
     if (item.slug) revalidatePath(`/products/${item.slug}`);
+  }
+  try {
+    const { sendRefundIssued } = await import("@/lib/email");
+    const { data: refundedOrder } = await supabase.from("orders").select("*").eq("id", orderId).single();
+    if (refundedOrder) await sendRefundIssued(refundedOrder as import("@/lib/types").Order);
+  } catch (err) {
+    console.error("Refund email failed:", err);
   }
   if (!restock.ok) {
     return {
@@ -1037,6 +1045,38 @@ export async function retryRetailSync(orderId: string): Promise<ActionResult> {
   return { ok: true, message: `Retail sales order ${result.salesOrderId} created. Inventory should drop in Heartland.` };
 }
 
+export async function markReturnReceived(orderId: string): Promise<ActionResult> {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  const supabase = await createPrivilegedClient();
+  const { data: order, error } = await supabase.from("orders").select("*").eq("id", orderId).single();
+  if (error || !order) return { ok: false, message: "Order not found." };
+  if (isOrderReturned(order)) {
+    return { ok: false, message: "This order was already refunded." };
+  }
+
+  const receivedAt = new Date().toISOString();
+  const { error: updateError } = await supabase
+    .from("orders")
+    .update({
+      return_requested_at: order.return_requested_at ?? receivedAt,
+      return_received_at: receivedAt,
+    })
+    .eq("id", orderId);
+  if (updateError) {
+    return {
+      ok: false,
+      message:
+        "Could not mark received. Run supabase/migrations/015_order_returns.sql in Supabase.",
+    };
+  }
+
+  revalidatePath("/admin/orders");
+  revalidatePath("/account");
+  return { ok: true, message: "Return received. You can now refund merchandise and tax." };
+}
+
 export async function syncInventoryFromHeartland(): Promise<ActionResult> {
   const denied = await requireAdmin();
   if (denied) return denied;
@@ -1105,6 +1145,14 @@ export async function saveOrderTracking(
   }
 
   revalidatePath("/admin/orders");
+  revalidatePath("/account");
+  try {
+    const { sendShippingNotification } = await import("@/lib/email");
+    const { data: shipped } = await supabase.from("orders").select("*").eq("id", orderId).single();
+    if (shipped) await sendShippingNotification(shipped as import("@/lib/types").Order);
+  } catch (err) {
+    console.error("Shipping email failed:", err);
+  }
   return { ok: true, message: "Order marked shipped with tracking." };
 }
 
@@ -1159,6 +1207,14 @@ export async function buyOrderShippingLabel(
       })
       .eq("id", orderId);
     revalidatePath("/admin/orders");
+    revalidatePath("/account");
+    try {
+      const { sendShippingNotification } = await import("@/lib/email");
+      const { data: shipped } = await supabase.from("orders").select("*").eq("id", orderId).single();
+      if (shipped) await sendShippingNotification(shipped as import("@/lib/types").Order);
+    } catch (err) {
+      console.error("Shipping email failed:", err);
+    }
     return {
       ok: true,
       message: `UPS billed your account${label.amount ? ` $${label.amount}` : ""}. Tracking ${label.trackingNumber}`,

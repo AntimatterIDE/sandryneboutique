@@ -70,8 +70,8 @@ export const POLICIES: Policy[] = [
       {
         heading: "Online purchases — return authorization required",
         body: [
-          "Please request a Return Authorization Number (RA#) via email within 2 days of receiving your order.",
-          "Include your RA# clearly on the UPS or FedEx shipping label.",
+          "Please request a return from your account (or email us) within 2 days of receiving your order. We will send return instructions.",
+          "Include your order reference clearly on the UPS or FedEx shipping label.",
           "USPS shipments will not be accepted.",
           "Items returned without authorization will be refused.",
         ],

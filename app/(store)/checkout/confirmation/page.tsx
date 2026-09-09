@@ -30,7 +30,9 @@ async function ConfirmationContent({
             <span className="text-foreground font-medium break-all">{order}</span>.
           </>
         )}{" "}
-        A confirmation email is on its way.
+        A confirmation email is on its way to the address you entered at checkout, with your
+        receipt, items, and order status. Guest checkouts still get that email. Create an
+        account with the same email to track shipping and returns later.
       </p>
       <div className="flex flex-col sm:flex-row gap-3 mt-2">
         <Button asChild className="rounded-none tracking-[0.2em] uppercase text-xs h-11 px-8">

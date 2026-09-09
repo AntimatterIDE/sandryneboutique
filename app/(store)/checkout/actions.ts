@@ -44,6 +44,8 @@ export interface CheckoutInput {
   discountCode?: string | null;
   captchaToken?: string | null;
   shippingServiceCode?: string | null;
+  createAccount?: boolean;
+  password?: string;
 }
 
 export type CheckoutResult =
@@ -179,6 +181,11 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
 
   const shippingError = validateShipping(input.shipping);
   if (shippingError) return { ok: false, error: shippingError };
+  if (input.createAccount) {
+    if (!input.password || input.password.length < 8) {
+      return { ok: false, error: "Password must be at least 8 characters to create an account." };
+    }
+  }
   if (input.billing) {
     if (!input.billing.line1?.trim()) return { ok: false, error: "Please enter the billing street address on your card." };
     if (!input.billing.postal_code?.trim()) return { ok: false, error: "Please enter the billing ZIP on your card." };
@@ -194,6 +201,20 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
   }
 
   const admin = createAdminClient();
+
+  if (input.createAccount) {
+    const { data: existingProfile } = await admin
+      .from("profiles")
+      .select("id")
+      .ilike("email", input.shipping.email.trim())
+      .maybeSingle();
+    if (existingProfile) {
+      return {
+        ok: false,
+        error: "An account already exists for this email. Sign in, then complete checkout.",
+      };
+    }
+  }
 
   const productIds = [...new Set(input.lines.map((l) => l.productId))];
   const variantIds = [
@@ -492,8 +513,50 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
 
   revalidatePath("/shop");
   revalidatePath("/admin/orders");
+  revalidatePath("/admin/customers");
   for (const item of orderItems) {
     if (item.slug) revalidatePath(`/products/${item.slug}`);
+  }
+
+  let userId = user?.id ?? null;
+  if (!userId && input.createAccount && input.password) {
+    try {
+      const created = await admin.auth.admin.createUser({
+        email: input.shipping.email.trim(),
+        password: input.password,
+        email_confirm: true,
+        user_metadata: { full_name: input.shipping.full_name.trim() },
+      });
+      if (created.data.user) {
+        userId = created.data.user.id;
+        await admin
+          .from("orders")
+          .update({ user_id: userId })
+          .eq("id", order.id);
+        const { linkOrdersToCustomer } = await import("@/lib/account-orders");
+        await linkOrdersToCustomer(admin, userId, input.shipping.email);
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: input.shipping.email.trim(),
+          password: input.password,
+        });
+        if (signInError) {
+          console.warn("Checkout account created but sign-in skipped:", signInError.message);
+        }
+      }
+    } catch (err) {
+      console.error("Checkout account creation failed:", err);
+    }
+  } else if (userId) {
+    const { linkOrdersToCustomer } = await import("@/lib/account-orders");
+    await linkOrdersToCustomer(admin, userId, input.shipping.email);
+  }
+
+  try {
+    const { sendOrderConfirmation } = await import("@/lib/email");
+    const { data: placed } = await admin.from("orders").select("*").eq("id", order.id).single();
+    if (placed) await sendOrderConfirmation(placed as import("@/lib/types").Order);
+  } catch (err) {
+    console.error("Order confirmation email failed:", err);
   }
 
   return { ok: true, orderId: order.id };

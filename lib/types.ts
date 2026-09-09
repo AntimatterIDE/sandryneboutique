@@ -155,6 +155,8 @@ export interface Order {
   refunded_amount?: number | null;
   refunded_at?: string | null;
   inventory_restocked_at?: string | null;
+  return_requested_at?: string | null;
+  return_received_at?: string | null;
   shipping_address: ShippingAddress;
   items: OrderItem[];
   created_at: string;

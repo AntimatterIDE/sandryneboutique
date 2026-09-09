@@ -1,13 +1,15 @@
 import type { Metadata } from "next";
 import { CheckoutForm } from "@/components/checkout/checkout-form";
+import { getSessionInfo } from "@/lib/auth";
 
 export const metadata: Metadata = {
   title: "Checkout",
 };
 
-export default function CheckoutPage() {
+export default async function CheckoutPage() {
   const publicKey = process.env.NEXT_PUBLIC_HEARTLAND_PUBLIC_KEY || null;
   const captchaSiteKey = process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY || null;
+  const { user, profile } = await getSessionInfo();
 
   return (
     <div className="mx-auto max-w-6xl px-4 sm:px-6 py-12 sm:py-16">
@@ -18,7 +20,12 @@ export default function CheckoutPage() {
         <h1 className="font-serif text-4xl sm:text-5xl tracking-tight">Checkout</h1>
       </header>
 
-      <CheckoutForm publicKey={publicKey} captchaSiteKey={captchaSiteKey} />
+      <CheckoutForm
+        publicKey={publicKey}
+        captchaSiteKey={captchaSiteKey}
+        signedInEmail={user?.email ?? null}
+        signedInName={profile?.full_name ?? null}
+      />
     </div>
   );
 }

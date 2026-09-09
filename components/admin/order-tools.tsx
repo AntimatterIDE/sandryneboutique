@@ -5,7 +5,12 @@ import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { buyOrderShippingLabel, refundOrder, saveOrderTracking } from "@/app/admin/actions";
+import {
+  buyOrderShippingLabel,
+  markReturnReceived,
+  refundOrder,
+  saveOrderTracking,
+} from "@/app/admin/actions";
 import type { Order } from "@/lib/types";
 import { formatPrice, isOrderReturned, orderRefundBreakdown } from "@/lib/types";
 
@@ -39,6 +44,10 @@ export function OrderTools({
 
   const refunded = refundedLocal || isOrderReturned(order) || order.status === "cancelled";
   const money = orderRefundBreakdown(order);
+  const returnRequested = Boolean(order.return_requested_at);
+  const returnReceived = Boolean(order.return_received_at);
+  const shippedOrder = order.status === "shipped" || Boolean(order.tracking_number);
+  const waitForReturn = shippedOrder && returnRequested && !returnReceived;
   const serviceName = order.shipping_service?.trim() || "UPS Ground";
   const serviceCode = order.shipping_service_code?.trim() || "03";
   const hasLabel = Boolean(order.shipping_label_url);
@@ -88,10 +97,37 @@ export function OrderTools({
           </div>
         ) : (
           <div className="space-y-2">
+            {returnRequested ? (
+              <p className="text-xs text-muted-foreground">
+                Customer requested a return
+                {order.return_requested_at
+                  ? ` on ${new Date(order.return_requested_at).toLocaleDateString()}`
+                  : ""}
+                . They pay return shipping. Original shipping is not refunded.
+              </p>
+            ) : null}
+            {returnRequested && !returnReceived ? (
+              <Button
+                type="button"
+                disabled={pending}
+                onClick={() => run(() => markReturnReceived(order.id))}
+                className="rounded-none tracking-[0.12em] uppercase text-xs"
+              >
+                Mark return received
+              </Button>
+            ) : null}
+            {returnReceived ? (
+              <p className="text-xs text-muted-foreground">Item received — refund the card.</p>
+            ) : null}
             <Button
               type="button"
               variant="outline"
-              disabled={pending || !order.heartland_transaction_id || money.refundable <= 0}
+              disabled={
+                pending ||
+                !order.heartland_transaction_id ||
+                money.refundable <= 0 ||
+                waitForReturn
+              }
               onClick={() => {
                 const keep =
                   money.shippingKept > 0
@@ -110,7 +146,11 @@ export function OrderTools({
             >
               Refund {formatPrice(money.refundable)}
             </Button>
-            {money.shippingKept > 0 ? (
+            {waitForReturn ? (
+              <p className="text-xs text-muted-foreground">
+                Wait until the return arrives, then mark it received before refunding.
+              </p>
+            ) : money.shippingKept > 0 ? (
               <p className="text-xs text-muted-foreground">
                 Shipping {formatPrice(money.shippingKept)} stays charged.
               </p>

@@ -114,7 +114,11 @@ export default async function AdminOrdersPage({
                       variant="secondary"
                       className="rounded-none text-[10px] uppercase tracking-[0.14em]"
                     >
-                      {isOrderReturned(order) ? "Returned" : order.status}
+                      {isOrderReturned(order)
+                        ? "Returned"
+                        : order.return_requested_at && !order.refunded_at
+                          ? "Return requested"
+                          : order.status}
                     </Badge>
                     <span className="text-sm font-medium tabular-nums sm:ml-auto">
                       {formatPrice(order.total_amount)}

@@ -66,9 +66,13 @@ const EMPTY_SHIPPING: ShippingAddress = {
 export function CheckoutForm({
   publicKey,
   captchaSiteKey,
+  signedInEmail = null,
+  signedInName = null,
 }: {
   publicKey: string | null;
   captchaSiteKey: string | null;
+  signedInEmail?: string | null;
+  signedInName?: string | null;
 }) {
   const router = useRouter();
   const { items, clearCart } = useCart();
@@ -85,6 +89,8 @@ export function CheckoutForm({
   const [shippingRates, setShippingRates] = useState<CheckoutShippingOption[]>([]);
   const [selectedShippingCode, setSelectedShippingCode] = useState<string | null>(null);
   const [quoting, setQuoting] = useState(false);
+  const [createAccount, setCreateAccount] = useState(false);
+  const [accountPassword, setAccountPassword] = useState("");
   const formMounted = useRef(false);
 
   // Refs so the token-success handler (bound once) always sees current values.
@@ -95,6 +101,8 @@ export function CheckoutForm({
   const captchaTokenRef = useRef(captchaToken);
   const selectedShippingCodeRef = useRef(selectedShippingCode);
   const quotingRef = useRef(quoting);
+  const createAccountRef = useRef(createAccount);
+  const accountPasswordRef = useRef(accountPassword);
   useEffect(() => {
     shippingRef.current = shipping;
     billingRef.current = { billingSameAsShipping, billingLine1, billingPostal };
@@ -103,7 +111,18 @@ export function CheckoutForm({
     captchaTokenRef.current = captchaToken;
     selectedShippingCodeRef.current = selectedShippingCode;
     quotingRef.current = quoting;
-  }, [shipping, billingSameAsShipping, billingLine1, billingPostal, items, appliedCode, captchaToken, selectedShippingCode, quoting]);
+    createAccountRef.current = createAccount;
+    accountPasswordRef.current = accountPassword;
+  }, [shipping, billingSameAsShipping, billingLine1, billingPostal, items, appliedCode, captchaToken, selectedShippingCode, quoting, createAccount, accountPassword]);
+
+  useEffect(() => {
+    if (!signedInEmail && !signedInName) return;
+    setShipping((current) => ({
+      ...current,
+      email: current.email || signedInEmail || "",
+      full_name: current.full_name || signedInName || "",
+    }));
+  }, [signedInEmail, signedInName]);
 
   const appliedDiscount = findDiscount(appliedCode);
   const subtotal = cartSubtotal(items);
@@ -204,6 +223,10 @@ export function CheckoutForm({
         toast.error("Enter a complete shipping address and choose a shipping option before payment.");
         return;
       }
+      if (!signedInEmail && createAccountRef.current && accountPasswordRef.current.length < 8) {
+        toast.error("Password must be at least 8 characters to create an account.");
+        return;
+      }
 
       setProcessing(true);
       try {
@@ -228,6 +251,8 @@ export function CheckoutForm({
           discountCode: appliedCodeRef.current,
           captchaToken: captchaTokenRef.current,
           shippingServiceCode: selectedShippingCodeRef.current,
+          createAccount: !signedInEmail && createAccountRef.current,
+          password: createAccountRef.current ? accountPasswordRef.current : undefined,
         });
 
         if (result.ok) {
@@ -243,7 +268,7 @@ export function CheckoutForm({
         setProcessing(false);
       }
     },
-    [clearCart, router]
+    [clearCart, router, signedInEmail]
   );
 
   useEffect(() => {
@@ -306,6 +331,10 @@ export function CheckoutForm({
               <div className="space-y-1.5">
                 <Label htmlFor="email">Email</Label>
                 <Input id="email" type="email" autoComplete="email" value={shipping.email} onChange={update("email")} className="rounded-none" />
+                <p className="text-xs text-muted-foreground">
+                  Your receipt and shipping updates are sent here
+                  {signedInEmail ? `, as ${signedInEmail}.` : "."}
+                </p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="phone">Phone (optional)</Label>
@@ -337,6 +366,62 @@ export function CheckoutForm({
               </div>
             </div>
           </section>
+
+          {!signedInEmail && (
+            <section>
+              <h2 className="text-[11px] tracking-[0.22em] uppercase text-muted-foreground mb-5">
+                Account
+              </h2>
+              <div className="space-y-3">
+                <label className="flex items-start gap-3 text-sm cursor-pointer">
+                  <input
+                    type="radio"
+                    name="checkout-account"
+                    checked={!createAccount}
+                    onChange={() => setCreateAccount(false)}
+                    className="mt-1 size-4 accent-foreground"
+                  />
+                  <span>
+                    <span className="font-medium">Checkout as guest</span>
+                    <span className="block text-xs text-muted-foreground mt-0.5">
+                      We&apos;ll email your receipt. You can create an account later with the same
+                      email to see this order.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-3 text-sm cursor-pointer">
+                  <input
+                    type="radio"
+                    name="checkout-account"
+                    checked={createAccount}
+                    onChange={() => setCreateAccount(true)}
+                    className="mt-1 size-4 accent-foreground"
+                  />
+                  <span>
+                    <span className="font-medium">Create an account</span>
+                    <span className="block text-xs text-muted-foreground mt-0.5">
+                      Track shipping, view past orders, and request returns from your profile.
+                    </span>
+                  </span>
+                </label>
+                {createAccount && (
+                  <div className="space-y-1.5 sm:max-w-sm">
+                    <Label htmlFor="account_password">Password</Label>
+                    <Input
+                      id="account_password"
+                      type="password"
+                      autoComplete="new-password"
+                      minLength={8}
+                      value={accountPassword}
+                      onChange={(e) => setAccountPassword(e.target.value)}
+                      className="rounded-none"
+                    />
+                    <p className="text-xs text-muted-foreground">At least 8 characters.</p>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
 
           <section>
             <h2 className="text-[11px] tracking-[0.22em] uppercase text-muted-foreground mb-5">
