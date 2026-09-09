@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { TrustBadges } from "@/components/product/trust-badges";
 import { FLAT_SHIPPING_RATE, FREE_SHIPPING_THRESHOLD } from "@/lib/constants";
-import { checkoutTotals, isAddressQuotable } from "@/lib/tax";
+import { checkoutTotals, isAddressQuotable, isGeorgia } from "@/lib/tax";
 import { discountAmount, findDiscount } from "@/lib/discounts";
 import { cartLineKey, cartSubtotal, useCart } from "@/lib/store/cart";
 import { useHydrated } from "@/lib/hooks/use-hydrated";
@@ -152,6 +152,7 @@ export function CheckoutForm({
     postalCode: shipping.postal_code,
     shippingAmount: selectedShippingCost ?? 0,
   });
+  const shipsToGeorgia = isGeorgia(shipping.state, shipping.postal_code);
   const shippingService = selectedRate
     ? selectedShippingCost === 0
       ? `${selectedRate.service} (Free)`
@@ -733,13 +734,17 @@ export function CheckoutForm({
                 </dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-muted-foreground">Est. tax</dt>
+                <dt className="text-muted-foreground">
+                  {shippingReady && !quoting && !shipsToGeorgia ? "Tax" : "Georgia tax"}
+                </dt>
                 <dd className="tabular-nums">
                   {quoting
                     ? "Calculating…"
-                    : shippingReady
-                      ? formatPrice(tax)
-                      : "Enter shipping address"}
+                    : !shippingReady
+                      ? "Enter shipping address"
+                      : shipsToGeorgia
+                        ? formatPrice(tax)
+                        : "None"}
                 </dd>
               </div>
               <Separator className="my-3" />
@@ -752,9 +757,9 @@ export function CheckoutForm({
             </dl>
 
             <p className="mt-6 text-[11px] text-muted-foreground leading-relaxed">
-              Shipping is quoted from your address. Choose Ground or a faster UPS service.
-              Orders over {formatPrice(FREE_SHIPPING_THRESHOLD)} include free Ground. By
-              placing your order you agree to our{" "}
+              Georgia shipping addresses include sales tax. Other states do not. Shipping is
+              quoted from your address. Orders over {formatPrice(FREE_SHIPPING_THRESHOLD)} include
+              free Ground. By placing your order you agree to our{" "}
               <Link href="/policies/terms" className="underline underline-offset-2">
                 terms of service
               </Link>

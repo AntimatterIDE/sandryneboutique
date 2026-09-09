@@ -17,7 +17,7 @@ import {
 } from "@/lib/heartland-retail";
 import { consumeCheckoutAttempt, getClientIp } from "@/lib/checkout-velocity";
 import { hcaptchaConfigured, verifyHCaptcha } from "@/lib/hcaptcha";
-import { checkoutTotals, isAddressQuotable, shippingForSubtotal } from "@/lib/tax";
+import { checkoutTotals, isAddressQuotable, isGeorgia, shippingForSubtotal } from "@/lib/tax";
 import { FLAT_SHIPPING_RATE } from "@/lib/constants";
 import { discountAmount, findDiscount } from "@/lib/discounts";
 import type { OrderItem, Product, ProductVariant, ShippingAddress } from "@/lib/types";
@@ -361,6 +361,17 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
     postalCode: input.shipping.postal_code,
     shippingAmount: shippingCost,
   });
+
+  if (
+    isGeorgia(input.shipping.state, input.shipping.postal_code) &&
+    discountedSubtotal + shippingCost > 0 &&
+    tax <= 0
+  ) {
+    return {
+      ok: false,
+      error: "Couldn't calculate Georgia sales tax for this address. Check the shipping ZIP and try again.",
+    };
+  }
 
   const billingStreet = input.billing?.line1?.trim() || input.shipping.line1;
   const billingPostal = input.billing?.postal_code?.trim() || input.shipping.postal_code;

@@ -1,8 +1,12 @@
 import { FLAT_SHIPPING_RATE, FREE_SHIPPING_THRESHOLD } from "@/lib/constants";
 
-/** Destination-based Georgia sales tax. Other states: no nexus collected yet. */
+/**
+ * Destination Georgia sales tax (where the order ships).
+ * Combined state + local. Other states: $0 until nexus is registered there.
+ */
 const GA_DEFAULT_RATE = 0.07;
 const GA_ATLANTA_RATE = 0.089;
+const GA_GWINNETT_RATE = 0.06;
 
 function zipDigits(postalCode: string | null | undefined): string {
   return (postalCode ?? "").replace(/\D/g, "");
@@ -14,18 +18,89 @@ function zipLooksLikeGeorgia(postalCode: string | null | undefined): boolean {
   return (prefix >= 300 && prefix <= 319) || (prefix >= 398 && prefix <= 399);
 }
 
+function stateLooksLikeGeorgia(state: string | null | undefined): boolean {
+  const value = state?.trim().toLowerCase().replace(/\./g, "") ?? "";
+  if (!value) return false;
+  if (value === "ga" || value === "georgia") return true;
+  return /^(ga|georgia)(\s|,|-|$)/.test(value);
+}
+
 export function isGeorgia(
   state: string | null | undefined,
   postalCode?: string | null
 ): boolean {
-  const value = state?.trim().toLowerCase().replace(/\./g, "") ?? "";
-  if (value === "ga" || value === "georgia") return true;
-  return zipLooksLikeGeorgia(postalCode);
+  return stateLooksLikeGeorgia(state) || zipLooksLikeGeorgia(postalCode);
 }
+
+/** City of Atlanta combined rate (8.9%). 303/311 plus inner-metro ZIPs in the city. */
+const ATLANTA_ZIPS = new Set([
+  "30030",
+  "30032",
+  "30033",
+  "30301",
+  "30302",
+  "30303",
+  "30305",
+  "30306",
+  "30307",
+  "30308",
+  "30309",
+  "30310",
+  "30311",
+  "30312",
+  "30313",
+  "30314",
+  "30315",
+  "30316",
+  "30317",
+  "30318",
+  "30319",
+  "30321",
+  "30322",
+  "30324",
+  "30325",
+  "30326",
+  "30327",
+  "30329",
+  "30331",
+  "30332",
+  "30334",
+  "30342",
+  "30344",
+  "30354",
+  "30361",
+  "30363",
+]);
+
+/** Gwinnett County combined rate (6%). */
+const GWINNETT_ZIPS = new Set([
+  "30011",
+  "30017",
+  "30019",
+  "30024",
+  "30039",
+  "30043",
+  "30044",
+  "30045",
+  "30046",
+  "30047",
+  "30049",
+  "30052",
+  "30071",
+  "30078",
+  "30092",
+  "30093",
+  "30095",
+  "30096",
+]);
 
 export function georgiaTaxRate(postalCode: string | null | undefined): number {
   const zip = zipDigits(postalCode);
-  if (zip.startsWith("303") || zip.startsWith("311")) return GA_ATLANTA_RATE;
+  const five = zip.slice(0, 5);
+  if (zip.startsWith("303") || zip.startsWith("311") || ATLANTA_ZIPS.has(five)) {
+    return GA_ATLANTA_RATE;
+  }
+  if (GWINNETT_ZIPS.has(five)) return GA_GWINNETT_RATE;
   return GA_DEFAULT_RATE;
 }
 
@@ -36,8 +111,11 @@ export function estimateSalesTax(input: {
 }): number {
   if (input.taxableAmount <= 0) return 0;
   if (!isGeorgia(input.state, input.postalCode)) return 0;
-  const rate = georgiaTaxRate(input.postalCode);
-  return Math.round(input.taxableAmount * rate * 100) / 100;
+  const rate = georgiaTaxRate(input.postalCode) || GA_DEFAULT_RATE;
+  const tax = Math.round(input.taxableAmount * rate * 100) / 100;
+  // Georgia shipments with a taxable total must collect tax — never silently $0.00.
+  if (tax > 0) return tax;
+  return Math.max(0.01, Math.round(input.taxableAmount * GA_DEFAULT_RATE * 100) / 100);
 }
 
 export function shippingForSubtotal(subtotal: number): number {
