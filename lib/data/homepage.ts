@@ -1,8 +1,23 @@
 import { createClient } from "@/lib/supabase/server";
 import { getProducts, getProductsByIds, supabaseConfigured } from "@/lib/data/products";
+import { DEFAULT_HERO_IMAGE } from "@/lib/homepage-defaults";
 import type { HomepageSection, Product } from "@/lib/types";
 
 const DEFAULT_SECTIONS: HomepageSection[] = [
+  {
+    id: "hero",
+    label: "Hero",
+    title: "Summer, Elevated.",
+    subtitle: "The Summer '26 Edit",
+    cta_label: "Explore Summer Collection",
+    cta_href: "/shop?category=new-arrivals",
+    product_ids: [],
+    max_items: 8,
+    enabled: true,
+    sort_order: 0,
+    image_url: DEFAULT_HERO_IMAGE,
+    updated_at: new Date(0).toISOString(),
+  },
   {
     id: "featured_carousel",
     label: "Featured carousel",
@@ -14,6 +29,7 @@ const DEFAULT_SECTIONS: HomepageSection[] = [
     max_items: 8,
     enabled: true,
     sort_order: 10,
+    image_url: "",
     updated_at: new Date(0).toISOString(),
   },
   {
@@ -27,9 +43,18 @@ const DEFAULT_SECTIONS: HomepageSection[] = [
     max_items: 8,
     enabled: true,
     sort_order: 20,
+    image_url: "",
     updated_at: new Date(0).toISOString(),
   },
 ];
+
+function normalizeSection(row: HomepageSection): HomepageSection {
+  return {
+    ...row,
+    product_ids: Array.isArray(row.product_ids) ? row.product_ids : [],
+    image_url: typeof row.image_url === "string" ? row.image_url : "",
+  };
+}
 
 export async function getHomepageSections(): Promise<HomepageSection[]> {
   if (!supabaseConfigured()) return DEFAULT_SECTIONS;
@@ -46,8 +71,13 @@ export async function getHomepageSections(): Promise<HomepageSection[]> {
     return DEFAULT_SECTIONS;
   }
 
-  if (!data || data.length === 0) return DEFAULT_SECTIONS;
-  return data as HomepageSection[];
+  const rows = ((data ?? []) as HomepageSection[]).map(normalizeSection);
+  if (rows.length === 0) return DEFAULT_SECTIONS;
+
+  const byId = new Map(rows.map((section) => [section.id, section]));
+  const known = DEFAULT_SECTIONS.map((fallback) => byId.get(fallback.id) ?? fallback);
+  const extras = rows.filter((section) => !DEFAULT_SECTIONS.some((d) => d.id === section.id));
+  return [...known, ...extras].sort((a, b) => a.sort_order - b.sort_order);
 }
 
 export async function getHomepageSection(id: string): Promise<HomepageSection | null> {

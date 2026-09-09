@@ -728,14 +728,29 @@ export interface HomepageSectionInput {
   product_ids: string[];
   max_items: number;
   enabled: boolean;
+  image_url?: string;
 }
 
-function validateHomepageSection(input: HomepageSectionInput): string | null {
+function isValidHomepageImageUrl(url: string): boolean {
+  if (url.startsWith("/")) return true;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function validateHomepageSection(id: string, input: HomepageSectionInput): string | null {
   if (!input.title?.trim()) return "Section title is required.";
   if (!input.cta_label?.trim()) return "CTA label is required.";
   if (!input.cta_href?.trim() || !input.cta_href.startsWith("/")) {
     return "CTA link must be a site path starting with / (e.g. /shop?category=tops).";
   }
+  if (input.image_url?.trim() && !isValidHomepageImageUrl(input.image_url.trim())) {
+    return "Hero image must be a site path or an http(s) URL.";
+  }
+  if (id === "hero") return null;
   if (!Number.isInteger(input.max_items) || input.max_items < 1 || input.max_items > 24) {
     return "Max products must be between 1 and 24.";
   }
@@ -752,36 +767,47 @@ export async function updateHomepageSection(
   const denied = await requireAdmin();
   if (denied) return denied;
 
-  const invalid = validateHomepageSection(input);
+  const invalid = validateHomepageSection(id, input);
   if (invalid) return { ok: false, message: invalid };
 
   const supabase = await createPrivilegedClient();
-  const { error } = await supabase
-    .from("homepage_sections")
-    .update({
-      title: input.title.trim(),
-      subtitle: input.subtitle.trim(),
-      cta_label: input.cta_label.trim(),
-      cta_href: input.cta_href.trim(),
-      product_ids: input.product_ids,
-      max_items: input.max_items,
-      enabled: input.enabled,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", id);
+  const fields = {
+    title: input.title.trim(),
+    subtitle: input.subtitle.trim(),
+    cta_label: input.cta_label.trim(),
+    cta_href: input.cta_href.trim(),
+    product_ids: id === "hero" ? [] : input.product_ids,
+    max_items: id === "hero" ? 8 : input.max_items,
+    enabled: input.enabled,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error } =
+    id === "hero"
+      ? await supabase.from("homepage_sections").upsert({
+          id: "hero",
+          label: "Hero",
+          sort_order: 0,
+          image_url: input.image_url?.trim() || null,
+          ...fields,
+        })
+      : await supabase.from("homepage_sections").update(fields).eq("id", id);
 
   if (error) {
     console.error("Homepage section update failed:", error);
+    const needsHeroColumn =
+      id === "hero" && /image_url|column/i.test(error.message || "");
     return {
       ok: false,
-      message:
-        "Failed to save section. Confirm migration 005_homepage_sections.sql was run in Supabase.",
+      message: needsHeroColumn
+        ? "Failed to save hero. Run migration 014_homepage_hero.sql in the Supabase SQL Editor."
+        : "Failed to save section. Confirm migration 005_homepage_sections.sql was run in Supabase.",
     };
   }
 
   revalidatePath("/");
   revalidatePath("/admin/homepage");
-  return { ok: true, message: "Homepage section saved." };
+  return { ok: true, message: id === "hero" ? "Hero saved." : "Homepage section saved." };
 }
 
 export async function deleteNewsletterSubscriber(id: string): Promise<ActionResult> {

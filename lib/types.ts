@@ -83,7 +83,7 @@ export interface Post {
   updated_at: string;
 }
 
-/** Curated home page product rail (admin-managed). */
+/** Curated home page section (hero image or product rail). */
 export interface HomepageSection {
   id: string;
   label: string;
@@ -95,6 +95,7 @@ export interface HomepageSection {
   max_items: number;
   enabled: boolean;
   sort_order: number;
+  image_url: string;
   updated_at: string;
 }
 

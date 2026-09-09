@@ -123,9 +123,9 @@ export default async function AdminDashboardPage() {
     },
     {
       href: "/admin/homepage",
-      label: "Homepage rails",
+      label: "Homepage",
       value: "Edit",
-      hint: "Featured & new arrivals",
+      hint: "Hero image, featured & new arrivals",
       icon: Home,
     },
   ];

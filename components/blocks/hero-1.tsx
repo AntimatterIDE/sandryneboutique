@@ -3,8 +3,29 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { AuroraVeil } from "@/components/react-bits/aurora-veil";
 import Magnetic from "@/components/react-bits/magnetic";
+import { DEFAULT_HERO_IMAGE } from "@/lib/homepage-defaults";
 
-export function Hero1() {
+interface Hero1Props {
+  imageUrl?: string | null;
+  title?: string | null;
+  subtitle?: string | null;
+  ctaLabel?: string | null;
+  ctaHref?: string | null;
+}
+
+function splitHeroTitle(title: string): { lead: string; rest: string | null } {
+  const comma = title.indexOf(",");
+  if (comma === -1) return { lead: title, rest: null };
+  return { lead: title.slice(0, comma + 1), rest: title.slice(comma + 1).trim() };
+}
+
+export function Hero1({ imageUrl, title, subtitle, ctaLabel, ctaHref }: Hero1Props) {
+  const src = imageUrl?.trim() || DEFAULT_HERO_IMAGE;
+  const heading = title?.trim() || "Summer, Elevated.";
+  const { lead, rest } = splitHeroTitle(heading);
+  const eyebrow = subtitle?.trim() || "The Summer '26 Edit";
+  const primaryLabel = ctaLabel?.trim() || "Explore Summer Collection";
+  const primaryHref = ctaHref?.trim() || "/shop?category=new-arrivals";
   return (
     <section className="relative isolate w-full flex items-start lg:items-center py-10 sm:py-14 px-4 sm:px-6 lg:px-8 bg-background">
       <AuroraVeil />
@@ -16,14 +37,20 @@ export function Hero1() {
                 New Arrivals
               </span>
               <span className="text-[11px] tracking-[0.24em] uppercase text-muted-foreground">
-                The Summer &rsquo;26 Edit
+                {eyebrow}
               </span>
             </div>
 
             <h1 className="hero-fade-up font-sans sm:font-serif text-5xl sm:text-6xl lg:text-7xl xl:text-[5.5rem] tracking-tight leading-[1.02] text-foreground">
-              Summer,
-              <br />
-              <em className="italic font-light">Elevated.</em>
+              {rest ? (
+                <>
+                  {lead}
+                  <br />
+                  <em className="italic font-light">{rest}</em>
+                </>
+              ) : (
+                heading
+              )}
             </h1>
 
             <p className="hero-fade-up text-base sm:text-lg text-muted-foreground leading-relaxed max-w-lg">
@@ -35,10 +62,10 @@ export function Hero1() {
             <div className="hero-fade-up hero-delay-3 flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4">
               <Magnetic className="w-full sm:w-auto">
                 <Link
-                  href="/shop?category=new-arrivals"
+                  href={primaryHref}
                   className="relative overflow-hidden flex items-center justify-center px-8 py-3.5 bg-foreground text-background text-[11px] tracking-[0.22em] uppercase hover:bg-foreground/85 transition-colors w-full"
                 >
-                  Explore Summer Collection
+                  {primaryLabel}
                 </Link>
               </Magnetic>
               <Magnetic className="w-full sm:w-auto">
@@ -63,8 +90,8 @@ export function Hero1() {
           <div className="hero-fade-up hero-delay-2 relative w-full h-auto hidden sm:block">
             <div className="relative w-full min-h-[360px] sm:min-h-[560px] lg:min-h-[640px] bg-muted overflow-hidden">
               <Image
-                src="https://images.unsplash.com/photo-1469334031218-e382a71b716b?q=80&w=800&auto=format&fit=crop"
-                alt="Summer, Elevated — the Sandryne Summer '26 collection"
+                src={src}
+                alt={`${heading} — Sandryne Boutique`}
                 fill
                 priority
                 fetchPriority="high"

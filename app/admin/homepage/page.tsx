@@ -28,8 +28,8 @@ export default async function AdminHomepagePage() {
       <header>
         <h1 className="font-serif text-3xl tracking-tight">Homepage</h1>
         <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
-          Curate the featured carousel and new-arrivals grid — pick products, copy, and
-          links. Empty product lists auto-fill from the catalog.
+          Change the homepage hero photo, then curate the featured carousel and
+          new-arrivals grid. Empty product lists auto-fill from the catalog.
         </p>
       </header>
 

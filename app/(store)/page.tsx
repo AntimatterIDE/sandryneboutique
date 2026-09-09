@@ -60,6 +60,7 @@ export const metadata: Metadata = {
 
 export default async function HomePage() {
   const sections = await getHomepageSections();
+  const hero = sections.find((s) => s.id === "hero");
   const carousel = sections.find((s) => s.id === "featured_carousel");
   const arrivals = sections.find((s) => s.id === "new_arrivals");
 
@@ -70,7 +71,13 @@ export default async function HomePage() {
 
   return (
     <>
-      <Hero1 />
+      <Hero1
+        imageUrl={hero?.image_url}
+        title={hero?.title}
+        subtitle={hero?.subtitle}
+        ctaLabel={hero?.cta_label}
+        ctaHref={hero?.cta_href}
+      />
       <TaglineMarquee />
       <CategoryShowcase />
 

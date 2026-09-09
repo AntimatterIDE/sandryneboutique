@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { HeroImageField } from "@/components/admin/hero-image-field";
 import type { HomepageSection, Product } from "@/lib/types";
 import { formatPrice, effectivePrice } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -30,7 +31,9 @@ export function HomepageSectionForm({ section, products }: HomepageSectionFormPr
   const [maxItems, setMaxItems] = useState(section.max_items);
   const [enabled, setEnabled] = useState(section.enabled);
   const [productIds, setProductIds] = useState<string[]>(section.product_ids);
+  const [imageUrl, setImageUrl] = useState(section.image_url ?? "");
   const [query, setQuery] = useState("");
+  const isHero = section.id === "hero";
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -76,9 +79,10 @@ export function HomepageSectionForm({ section, products }: HomepageSectionFormPr
       subtitle,
       cta_label: ctaLabel,
       cta_href: ctaHref,
-      product_ids: productIds,
-      max_items: maxItems,
+      product_ids: isHero ? [] : productIds,
+      max_items: isHero ? 8 : maxItems,
       enabled,
+      image_url: imageUrl,
     };
 
     startTransition(async () => {
@@ -97,10 +101,12 @@ export function HomepageSectionForm({ section, products }: HomepageSectionFormPr
           </p>
           <h2 className="font-serif text-2xl tracking-tight mt-1">{section.title}</h2>
         </div>
-        <label className="flex items-center gap-3 text-sm">
-          <Switch checked={enabled} onCheckedChange={setEnabled} />
-          Visible on homepage
-        </label>
+        {!isHero && (
+          <label className="flex items-center gap-3 text-sm">
+            <Switch checked={enabled} onCheckedChange={setEnabled} />
+            Visible on homepage
+          </label>
+        )}
       </header>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -141,20 +147,34 @@ export function HomepageSectionForm({ section, products }: HomepageSectionFormPr
             placeholder="/shop?category=tops"
           />
         </div>
-        <div className="space-y-2">
-          <Label htmlFor={`${section.id}-max`}>Max products</Label>
-          <Input
-            id={`${section.id}-max`}
-            type="number"
-            min={1}
-            max={24}
-            value={maxItems}
-            onChange={(e) => setMaxItems(Number(e.target.value) || 8)}
-            className="rounded-none w-28"
-          />
-        </div>
+        {!isHero && (
+          <div className="space-y-2">
+            <Label htmlFor={`${section.id}-max`}>Max products</Label>
+            <Input
+              id={`${section.id}-max`}
+              type="number"
+              min={1}
+              max={24}
+              value={maxItems}
+              onChange={(e) => setMaxItems(Number(e.target.value) || 8)}
+              className="rounded-none w-28"
+            />
+          </div>
+        )}
       </div>
 
+      {isHero && (
+        <div className="space-y-2">
+          <Label>Hero image</Label>
+          <p className="text-xs text-muted-foreground">
+            This photo appears on the right side of the homepage hero. Upload a new
+            file or paste a URL, then save.
+          </p>
+          <HeroImageField value={imageUrl} onChange={setImageUrl} />
+        </div>
+      )}
+
+      {!isHero && (
       <div className="space-y-3">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -269,6 +289,7 @@ export function HomepageSectionForm({ section, products }: HomepageSectionFormPr
           )}
         </div>
       </div>
+      )}
 
       <div className="pt-2">
         <Button
@@ -277,7 +298,13 @@ export function HomepageSectionForm({ section, products }: HomepageSectionFormPr
           disabled={pending}
           className="rounded-none tracking-[0.16em] uppercase text-xs h-11 px-8"
         >
-          {pending ? <Loader2 className="size-4 animate-spin" /> : "Save section"}
+          {pending ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : isHero ? (
+            "Save hero"
+          ) : (
+            "Save section"
+          )}
         </Button>
       </div>
     </section>
