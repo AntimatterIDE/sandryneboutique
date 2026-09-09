@@ -59,13 +59,27 @@ export async function syncWebsiteOrderToRetail(
       postal_code: string;
       country: string;
     };
+    const billing = (order as { billing_address?: typeof shipping | null; tax_amount?: number | null })
+      .billing_address;
 
     const retail = await syncPaidOrderToRetail({
       email: order.email,
       fullName: shipping.full_name,
       shipping,
+      billing: billing
+        ? {
+            fullName: billing.full_name,
+            line1: billing.line1,
+            line2: billing.line2,
+            city: billing.city,
+            state: billing.state,
+            postal_code: billing.postal_code,
+            country: billing.country,
+          }
+        : null,
       lines,
       shippingCharge: Number(order.shipping_amount ?? 0),
+      taxAmount: Number((order as { tax_amount?: number | null }).tax_amount ?? 0),
       totalAmount: Number(order.total_amount),
       porticoTransactionId: order.heartland_transaction_id ?? undefined,
       existingSalesOrderId:

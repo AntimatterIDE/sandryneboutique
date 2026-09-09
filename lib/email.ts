@@ -1,14 +1,12 @@
 import "server-only";
 import { Resend } from "resend";
+import { publicSiteUrl } from "@/lib/site-url";
 import { SITE_EMAIL, SITE_NAME, STORE_CONTACT } from "@/lib/constants";
 import type { Order } from "@/lib/types";
 import { formatPrice, orderMoneyBreakdown, orderRefundBreakdown } from "@/lib/types";
 
 function siteUrl(): string {
-  return (process.env.NEXT_PUBLIC_SITE_URL || "https://sandryneboutique.vercel.app").replace(
-    /\/$/,
-    ""
-  );
+  return publicSiteUrl();
 }
 
 function fromAddress(): string {
@@ -191,6 +189,21 @@ export async function sendRefundIssued(order: Order): Promise<void> {
     `
   );
   await send(order.email, `Refund issued · ${SITE_NAME}`, html);
+}
+
+export async function sendWelcomeEmail(input: {
+  email: string;
+  fullName: string;
+}): Promise<void> {
+  const html = layout(
+    "Your account is ready",
+    `
+      <p>Hi ${escapeHtml(input.fullName.split(" ")[0] || "there")},</p>
+      <p>Your Sandryne Boutique account is set up. Sign in anytime to track orders, shipping, and returns.</p>
+      <p><a href="${siteUrl()}/login">Sign in to your account</a></p>
+    `
+  );
+  await send(input.email, `Your account · ${SITE_NAME}`, html);
 }
 
 export { orderStatusLabel };

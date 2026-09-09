@@ -32,8 +32,13 @@ export interface CheckoutLine {
 }
 
 export interface CheckoutBilling {
+  full_name?: string;
   line1: string;
+  line2?: string | null;
+  city?: string;
+  state?: string;
   postal_code: string;
+  country?: string;
 }
 
 export interface CheckoutInput {
@@ -188,6 +193,8 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
   }
   if (input.billing) {
     if (!input.billing.line1?.trim()) return { ok: false, error: "Please enter the billing street address on your card." };
+    if (!input.billing.city?.trim()) return { ok: false, error: "Please enter the billing city." };
+    if (!input.billing.state?.trim()) return { ok: false, error: "Please enter the billing state." };
     if (!input.billing.postal_code?.trim()) return { ok: false, error: "Please enter the billing ZIP on your card." };
   }
 
@@ -392,6 +399,17 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
     shipping_service: shippingQuote.service,
     shipping_service_code: shippingQuote.code,
     shipping_address: input.shipping,
+    billing_address: input.billing
+      ? {
+          full_name: input.billing.full_name?.trim() || input.shipping.full_name,
+          line1: input.billing.line1.trim(),
+          line2: input.billing.line2?.trim() || null,
+          city: input.billing.city?.trim() || input.shipping.city,
+          state: input.billing.state?.trim() || input.shipping.state,
+          postal_code: input.billing.postal_code.trim(),
+          country: input.billing.country?.trim() || input.shipping.country,
+        }
+      : input.shipping,
     items: orderItems,
   };
 
@@ -402,17 +420,30 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
     .single();
 
   if (orderError) {
+    const { billing_address: _billing, shipping_service: _svc, shipping_service_code: _code, ...withoutService } =
+      orderPayload;
+    void _billing;
+    void _svc;
+    void _code;
+    const retry = await admin.from("orders").insert(withoutService).select("id").single();
+    order = retry.data;
+    orderError = retry.error;
+  }
+
+  if (orderError) {
     const {
       tax_amount: _tax,
       shipping_amount: _ship,
-      shipping_service: _svc,
-      shipping_service_code: _code,
+      shipping_service: _svc2,
+      shipping_service_code: _code2,
+      billing_address: _billing2,
       ...legacyPayload
     } = orderPayload;
-    void _svc;
-    void _code;
+    void _svc2;
+    void _code2;
     void _tax;
     void _ship;
+    void _billing2;
     const retry = await admin.from("orders").insert(legacyPayload).select("id").single();
     order = retry.data;
     orderError = retry.error;
@@ -474,9 +505,22 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
           state: input.shipping.state,
           postal_code: input.shipping.postal_code,
           country: input.shipping.country,
+          fullName: input.shipping.full_name,
         },
+        billing: input.billing
+          ? {
+              fullName: input.billing.full_name || input.shipping.full_name,
+              line1: input.billing.line1,
+              line2: input.billing.line2,
+              city: input.billing.city,
+              state: input.billing.state,
+              postal_code: input.billing.postal_code,
+              country: input.billing.country || input.shipping.country,
+            }
+          : null,
         lines: retailLines,
         shippingCharge: shippingCost,
+        taxAmount: tax,
         totalAmount: total,
         porticoTransactionId: charge.transactionId,
         persistSalesOrderId: async (id) => {
@@ -535,6 +579,15 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
           .eq("id", order.id);
         const { linkOrdersToCustomer } = await import("@/lib/account-orders");
         await linkOrdersToCustomer(admin, userId, input.shipping.email);
+        try {
+          const { sendWelcomeEmail } = await import("@/lib/email");
+          await sendWelcomeEmail({
+            email: input.shipping.email.trim(),
+            fullName: input.shipping.full_name.trim(),
+          });
+        } catch (err) {
+          console.error("Welcome email failed:", err);
+        }
         const { error: signInError } = await supabase.auth.signInWithPassword({
           email: input.shipping.email.trim(),
           password: input.password,

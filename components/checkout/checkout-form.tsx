@@ -79,8 +79,15 @@ export function CheckoutForm({
   const hydrated = useHydrated();
   const [shipping, setShipping] = useState<ShippingAddress>(EMPTY_SHIPPING);
   const [billingSameAsShipping, setBillingSameAsShipping] = useState(true);
-  const [billingLine1, setBillingLine1] = useState("");
-  const [billingPostal, setBillingPostal] = useState("");
+  const [billing, setBilling] = useState({
+    full_name: "",
+    line1: "",
+    line2: "",
+    city: "",
+    state: "",
+    postal_code: "",
+    country: "United States",
+  });
   const [processing, setProcessing] = useState(false);
   const [scriptReady, setScriptReady] = useState(false);
   const [discountInput, setDiscountInput] = useState("");
@@ -95,7 +102,7 @@ export function CheckoutForm({
 
   // Refs so the token-success handler (bound once) always sees current values.
   const shippingRef = useRef(shipping);
-  const billingRef = useRef({ billingSameAsShipping, billingLine1, billingPostal });
+  const billingRef = useRef({ billingSameAsShipping, billing });
   const itemsRef = useRef(items);
   const appliedCodeRef = useRef(appliedCode);
   const captchaTokenRef = useRef(captchaToken);
@@ -105,7 +112,7 @@ export function CheckoutForm({
   const accountPasswordRef = useRef(accountPassword);
   useEffect(() => {
     shippingRef.current = shipping;
-    billingRef.current = { billingSameAsShipping, billingLine1, billingPostal };
+    billingRef.current = { billingSameAsShipping, billing };
     itemsRef.current = items;
     appliedCodeRef.current = appliedCode;
     captchaTokenRef.current = captchaToken;
@@ -113,7 +120,7 @@ export function CheckoutForm({
     quotingRef.current = quoting;
     createAccountRef.current = createAccount;
     accountPasswordRef.current = accountPassword;
-  }, [shipping, billingSameAsShipping, billingLine1, billingPostal, items, appliedCode, captchaToken, selectedShippingCode, quoting, createAccount, accountPassword]);
+  }, [shipping, billingSameAsShipping, billing, items, appliedCode, captchaToken, selectedShippingCode, quoting, createAccount, accountPassword]);
 
   useEffect(() => {
     if (!signedInEmail && !signedInName) return;
@@ -227,6 +234,13 @@ export function CheckoutForm({
         toast.error("Password must be at least 8 characters to create an account.");
         return;
       }
+      if (!billingRef.current.billingSameAsShipping) {
+        const card = billingRef.current.billing;
+        if (!card.line1.trim() || !card.city.trim() || !card.state.trim() || !card.postal_code.trim()) {
+          toast.error("Enter the full billing address on the card, or check that it matches shipping.");
+          return;
+        }
+      }
 
       setProcessing(true);
       try {
@@ -240,7 +254,15 @@ export function CheckoutForm({
           },
           billing: billing.billingSameAsShipping
             ? null
-            : { line1: billing.billingLine1, postal_code: billing.billingPostal },
+            : {
+                full_name: billing.billing.full_name || currentShipping.full_name,
+                line1: billing.billing.line1,
+                line2: billing.billing.line2 || null,
+                city: billing.billing.city,
+                state: billing.billing.state,
+                postal_code: billing.billing.postal_code,
+                country: billing.billing.country || currentShipping.country,
+              },
           lines: currentItems.map((i) => ({
             productId: i.productId,
             variantId: i.variantId ?? null,
@@ -490,12 +512,52 @@ export function CheckoutForm({
             {!billingSameAsShipping && (
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <div className="sm:col-span-2 space-y-1.5">
+                  <Label htmlFor="billing_name">Name on card</Label>
+                  <Input
+                    id="billing_name"
+                    autoComplete="cc-name"
+                    value={billing.full_name}
+                    onChange={(e) => setBilling((b) => ({ ...b, full_name: e.target.value }))}
+                    className="rounded-none"
+                  />
+                </div>
+                <div className="sm:col-span-2 space-y-1.5">
                   <Label htmlFor="billing_line1">Billing street</Label>
                   <Input
                     id="billing_line1"
                     autoComplete="billing address-line1"
-                    value={billingLine1}
-                    onChange={(e) => setBillingLine1(e.target.value)}
+                    value={billing.line1}
+                    onChange={(e) => setBilling((b) => ({ ...b, line1: e.target.value }))}
+                    className="rounded-none"
+                  />
+                </div>
+                <div className="sm:col-span-2 space-y-1.5">
+                  <Label htmlFor="billing_line2">Apartment, suite, etc. (optional)</Label>
+                  <Input
+                    id="billing_line2"
+                    autoComplete="billing address-line2"
+                    value={billing.line2}
+                    onChange={(e) => setBilling((b) => ({ ...b, line2: e.target.value }))}
+                    className="rounded-none"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="billing_city">City</Label>
+                  <Input
+                    id="billing_city"
+                    autoComplete="billing address-level2"
+                    value={billing.city}
+                    onChange={(e) => setBilling((b) => ({ ...b, city: e.target.value }))}
+                    className="rounded-none"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="billing_state">State</Label>
+                  <Input
+                    id="billing_state"
+                    autoComplete="billing address-level1"
+                    value={billing.state}
+                    onChange={(e) => setBilling((b) => ({ ...b, state: e.target.value }))}
                     className="rounded-none"
                   />
                 </div>
@@ -504,8 +566,8 @@ export function CheckoutForm({
                   <Input
                     id="billing_postal"
                     autoComplete="billing postal-code"
-                    value={billingPostal}
-                    onChange={(e) => setBillingPostal(e.target.value)}
+                    value={billing.postal_code}
+                    onChange={(e) => setBilling((b) => ({ ...b, postal_code: e.target.value }))}
                     className="rounded-none"
                   />
                 </div>
@@ -675,7 +737,7 @@ export function CheckoutForm({
                 <dd className="tabular-nums">
                   {quoting
                     ? "Calculating…"
-                    : shippingReady && shipping.state.trim()
+                    : shippingReady
                       ? formatPrice(tax)
                       : "Enter shipping address"}
                 </dd>

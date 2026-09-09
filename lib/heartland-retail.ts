@@ -582,6 +582,10 @@ function retailCountry(country: string): string {
   return trimmed.length === 2 ? trimmed.toUpperCase() : trimmed;
 }
 
+function postalDigits(zip: string | null | undefined): string {
+  return (zip ?? "").replace(/\D/g, "");
+}
+
 export async function createCustomerAddress(
   customerId: number,
   address: {
@@ -629,34 +633,147 @@ export async function createSalesOrder(input: {
   shipping_address_id?: number;
   billing_address_id?: number;
 }): Promise<number> {
+  const attempts: Record<string, unknown>[] = [
+    input,
+    {
+      customer_id: input.customer_id,
+      station_id: input.station_id,
+      source_location_id: input.source_location_id,
+      shipping_charge: input.shipping_charge,
+    },
+    {
+      customer_id: input.customer_id,
+      station_id: input.station_id,
+      source_location_id: input.source_location_id,
+    },
+  ];
+
+  let lastError: unknown;
+  let salesOrderId: number | null = null;
+  for (const payload of attempts) {
+    try {
+      const { res } = await retailFetch("/sales/orders", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      salesOrderId = parseLocationId(res.headers.get("location"));
+      break;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  if (!salesOrderId) {
+    throw lastError instanceof Error ? lastError : new Error("Could not create a Heartland sales order.");
+  }
+
+  if (input.shipping_charge != null) {
+    await setSalesOrderShippingCharge(salesOrderId, input.shipping_charge);
+  }
+
+  return salesOrderId;
+}
+
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function allocateLineTaxes(
+  lines: { quantity: number; unitPrice: number }[],
+  totalTax: number
+): number[] {
+  const tax = roundMoney(totalTax);
+  if (tax <= 0 || lines.length === 0) return lines.map(() => 0);
+  const extended = lines.map((line) => roundMoney(line.quantity * line.unitPrice));
+  const subtotal = roundMoney(extended.reduce((sum, amount) => sum + amount, 0));
+  if (subtotal <= 0) return lines.map(() => 0);
+  const shares = extended.map((amount, index) =>
+    index === extended.length - 1 ? 0 : roundMoney((amount / subtotal) * tax)
+  );
+  const assigned = roundMoney(shares.reduce((sum, amount) => sum + amount, 0));
+  shares[shares.length - 1] = roundMoney(tax - assigned);
+  return shares;
+}
+
+async function setSalesOrderShippingCharge(orderId: number, shippingCharge: number): Promise<void> {
+  const amount = roundMoney(shippingCharge);
+  for (const payload of [{ shipping_charge: amount }, { shipping_amount: amount }]) {
+    try {
+      await retailFetch(`/sales/orders/${orderId}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+      return;
+    } catch (err) {
+      console.warn("Heartland Retail shipping charge update skipped:", err);
+    }
+  }
+}
+
+async function setOrderLineTax(orderId: number, lineId: number, taxAmount: number): Promise<void> {
+  const tax = roundMoney(taxAmount);
+  for (const payload of [{ total_tax: tax }, { tax }, { tax_amount: tax }]) {
+    try {
+      await retailFetch(`/sales/orders/${orderId}/lines/${lineId}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+      return;
+    } catch {
+      // Try the next Heartland field name.
+    }
+  }
+}
+
+async function applyLineTaxesToExistingOrder(
+  orderId: number,
+  lines: RetailCheckoutLine[],
+  taxes: number[]
+): Promise<void> {
   try {
-    const { res } = await retailFetch("/sales/orders", {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-    return parseLocationId(res.headers.get("location"));
+    const { body } = await retailFetch(`/sales/orders/${orderId}/lines?per_page=50`);
+    const result = body as SearchResult<{ id: number; item_id?: number }>;
+    for (const row of result.results ?? []) {
+      const index = lines.findIndex((line) => line.heartlandItemId === row.item_id);
+      if (index >= 0) await setOrderLineTax(orderId, row.id, taxes[index] ?? 0);
+    }
   } catch (err) {
-    const { shipping_charge, shipping_address_id, billing_address_id, ...base } = input;
-    void shipping_charge;
-    void shipping_address_id;
-    void billing_address_id;
-    const { res } = await retailFetch("/sales/orders", {
-      method: "POST",
-      body: JSON.stringify(base),
-    });
-    return parseLocationId(res.headers.get("location"));
+    console.warn("Heartland Retail line tax update skipped:", err);
   }
 }
 
 export async function addOrderLine(
   orderId: number,
-  input: { item_id: number; qty: number; adjusted_unit_price?: number }
+  input: { item_id: number; qty: number; adjusted_unit_price?: number; total_tax?: number }
 ): Promise<number> {
-  const { res } = await retailFetch(`/sales/orders/${orderId}/lines`, {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-  return parseLocationId(res.headers.get("location"));
+  const { total_tax, ...line } = input;
+  const attempts: Record<string, unknown>[] = [];
+  if (total_tax != null) {
+    attempts.push({ ...line, total_tax });
+    attempts.push({ ...line, tax: total_tax });
+  }
+  attempts.push(line);
+
+  let lineId: number | null = null;
+  let lastError: unknown;
+  for (const payload of attempts) {
+    try {
+      const { res } = await retailFetch(`/sales/orders/${orderId}/lines`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      lineId = parseLocationId(res.headers.get("location"));
+      break;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  if (!lineId) {
+    throw lastError instanceof Error ? lastError : new Error("Could not add a Heartland order line.");
+  }
+  if (total_tax != null) {
+    await setOrderLineTax(orderId, lineId, total_tax);
+  }
+  return lineId;
 }
 
 export async function distributeOrderLine(
@@ -738,7 +855,8 @@ function splitName(fullName: string): { first_name: string; last_name: string } 
 async function attachSalesOrderAddresses(
   orderId: number,
   customerId: number,
-  addressId: number,
+  shippingAddressId: number,
+  billingAddressId: number,
   shipping: {
     line1: string;
     line2?: string | null;
@@ -747,12 +865,23 @@ async function attachSalesOrderAddresses(
     postal_code: string;
     country: string;
     fullName: string;
-  }
+  },
+  billing: {
+    line1: string;
+    line2?: string | null;
+    city: string;
+    state: string;
+    postal_code: string;
+    country: string;
+    fullName: string;
+  },
+  extras?: { shippingCharge?: number; taxAmount?: number }
 ): Promise<void> {
-  const names = splitName(shipping.fullName);
-  const addressBody = {
-    first_name: names.first_name,
-    last_name: names.last_name,
+  const shipNames = splitName(shipping.fullName);
+  const billNames = splitName(billing.fullName);
+  const shippingBody = {
+    first_name: shipNames.first_name,
+    last_name: shipNames.last_name,
     line_1: shipping.line1,
     line_2: shipping.line2 || null,
     city: shipping.city,
@@ -760,38 +889,77 @@ async function attachSalesOrderAddresses(
     postal_code: shipping.postal_code,
     country: retailCountry(shipping.country),
   };
+  const billingBody = {
+    first_name: billNames.first_name,
+    last_name: billNames.last_name,
+    line_1: billing.line1,
+    line_2: billing.line2 || null,
+    city: billing.city,
+    state: billing.state,
+    postal_code: billing.postal_code,
+    country: retailCountry(billing.country),
+  };
 
   try {
     await retailFetch(`/customers/${customerId}`, {
       method: "PUT",
       body: JSON.stringify({
-        address_id: addressId,
-        shipping_address_id: addressId,
-        billing_address_id: addressId,
+        address_id: shippingAddressId,
+        shipping_address_id: shippingAddressId,
+        billing_address_id: billingAddressId,
       }),
     });
   } catch (err) {
     console.warn("Heartland Retail customer address defaults skipped:", err);
   }
 
+  const chargePayload: Record<string, unknown> = {
+    shipping_address_id: shippingAddressId,
+    billing_address_id: billingAddressId,
+    shipping_address: shippingBody,
+    billing_address: billingBody,
+  };
+  if (extras?.shippingCharge != null) chargePayload.shipping_charge = extras.shippingCharge;
+  if (extras?.taxAmount != null) chargePayload.tax = extras.taxAmount;
+
   try {
     await retailFetch(`/sales/orders/${orderId}`, {
       method: "PUT",
-      body: JSON.stringify({
-        shipping_address_id: addressId,
-        billing_address_id: addressId,
-        shipping_address: addressBody,
-        billing_address: addressBody,
-      }),
+      body: JSON.stringify(chargePayload),
     });
   } catch {
-    await retailFetch(`/sales/orders/${orderId}`, {
-      method: "PUT",
-      body: JSON.stringify({
-        shipping_address_id: addressId,
-        billing_address_id: addressId,
-      }),
-    });
+    try {
+      await retailFetch(`/sales/orders/${orderId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          shipping_address_id: shippingAddressId,
+          billing_address_id: billingAddressId,
+          ...(extras?.shippingCharge != null ? { shipping_charge: extras.shippingCharge } : {}),
+        }),
+      });
+    } catch (err) {
+      console.warn("Heartland Retail order address ids skipped:", err);
+    }
+    try {
+      await retailFetch(`/sales/orders/${orderId}`, {
+        method: "PUT",
+        body: JSON.stringify({ shipping_address: shippingBody }),
+      });
+    } catch (err) {
+      console.warn("Heartland Retail shipping address body skipped:", err);
+    }
+    try {
+      await retailFetch(`/sales/orders/${orderId}`, {
+        method: "PUT",
+        body: JSON.stringify({ billing_address: billingBody }),
+      });
+    } catch (err) {
+      console.warn("Heartland Retail billing address body skipped:", err);
+    }
+  }
+
+  if (extras?.shippingCharge != null) {
+    await setSalesOrderShippingCharge(orderId, extras.shippingCharge);
   }
 }
 
@@ -1217,8 +1385,18 @@ export async function syncPaidOrderToRetail(input: {
     country: string;
     fullName?: string;
   };
+  billing?: {
+    line1: string;
+    line2?: string | null;
+    city?: string;
+    state?: string;
+    postal_code: string;
+    country?: string;
+    fullName?: string;
+  } | null;
   lines: RetailCheckoutLine[];
   shippingCharge: number;
+  taxAmount?: number;
   totalAmount: number;
   porticoTransactionId?: string;
   /** Resume an order that already has lines (payment previously 500'd). */
@@ -1233,16 +1411,18 @@ export async function syncPaidOrderToRetail(input: {
   const stationId = Number(process.env.HEARTLAND_RETAIL_STATION_ID);
   const locationId = Number(process.env.HEARTLAND_RETAIL_LOCATION_ID);
   const paymentTypeId = Number(process.env.HEARTLAND_RETAIL_WEB_PAYMENT_TYPE);
+  const shippingCharge = Math.round((input.shippingCharge || 0) * 100) / 100;
+  const taxAmount = Math.round((input.taxAmount || 0) * 100) / 100;
 
   const customerId = await upsertCustomerByEmail({
     email: input.email,
     fullName: input.fullName,
   });
 
-  const names = splitName(input.fullName);
-  const addressId = await createCustomerAddress(customerId, {
-    first_name: names.first_name,
-    last_name: names.last_name,
+  const shipNames = splitName(input.shipping.fullName || input.fullName);
+  const shippingAddressId = await createCustomerAddress(customerId, {
+    first_name: shipNames.first_name,
+    last_name: shipNames.last_name,
     address_1: input.shipping.line1,
     address_2: input.shipping.line2,
     city: input.shipping.city,
@@ -1251,34 +1431,92 @@ export async function syncPaidOrderToRetail(input: {
     country: input.shipping.country,
   });
 
+  const billing = input.billing;
+  const billingLooksDifferent = Boolean(
+    billing &&
+      (billing.line1.trim().toLowerCase() !== input.shipping.line1.trim().toLowerCase() ||
+        postalDigits(billing.postal_code) !== postalDigits(input.shipping.postal_code) ||
+        (billing.city?.trim() &&
+          billing.city.trim().toLowerCase() !== input.shipping.city.trim().toLowerCase()) ||
+        (billing.state?.trim() &&
+          billing.state.trim().toLowerCase() !== input.shipping.state.trim().toLowerCase()))
+  );
+
+  let billingAddressId = shippingAddressId;
+  const billingForAttach = {
+    line1: input.shipping.line1,
+    line2: input.shipping.line2,
+    city: input.shipping.city,
+    state: input.shipping.state,
+    postal_code: input.shipping.postal_code,
+    country: input.shipping.country,
+    fullName: input.fullName,
+  };
+
+  if (billingLooksDifferent && billing) {
+    const billNames = splitName(billing.fullName || input.fullName);
+    billingAddressId = await createCustomerAddress(customerId, {
+      first_name: billNames.first_name,
+      last_name: billNames.last_name,
+      address_1: billing.line1,
+      address_2: billing.line2,
+      city: billing.city?.trim() || input.shipping.city,
+      state: billing.state?.trim() || input.shipping.state,
+      zip: billing.postal_code,
+      country: billing.country?.trim() || input.shipping.country,
+    });
+    billingForAttach.line1 = billing.line1;
+    billingForAttach.line2 = billing.line2;
+    billingForAttach.city = billing.city?.trim() || input.shipping.city;
+    billingForAttach.state = billing.state?.trim() || input.shipping.state;
+    billingForAttach.postal_code = billing.postal_code;
+    billingForAttach.country = billing.country?.trim() || input.shipping.country;
+    billingForAttach.fullName = billing.fullName || input.fullName;
+  }
+
   let salesOrderId = input.existingSalesOrderId;
+  const lineTaxes = allocateLineTaxes(input.lines, taxAmount);
+  const addressArgs = [
+    customerId,
+    shippingAddressId,
+    billingAddressId,
+    {
+      ...input.shipping,
+      fullName: input.shipping.fullName || input.fullName,
+    },
+    billingForAttach,
+    { shippingCharge, taxAmount },
+  ] as const;
+
   if (!salesOrderId) {
     salesOrderId = await createSalesOrder({
       customer_id: customerId,
       station_id: stationId,
       source_location_id: locationId,
-      shipping_charge: Math.round((input.shippingCharge || 0) * 100) / 100,
-      shipping_address_id: addressId,
-      billing_address_id: addressId,
+      shipping_charge: shippingCharge,
+      shipping_address_id: shippingAddressId,
+      billing_address_id: billingAddressId,
     });
     await input.persistSalesOrderId?.(salesOrderId);
+    await attachSalesOrderAddresses(salesOrderId, ...addressArgs);
 
-    for (const line of input.lines) {
+    for (let index = 0; index < input.lines.length; index++) {
+      const line = input.lines[index];
       const lineId = await addOrderLine(salesOrderId, {
         item_id: line.heartlandItemId,
         qty: line.quantity,
         adjusted_unit_price: line.unitPrice,
+        total_tax: lineTaxes[index],
       });
       await distributeOrderLine(salesOrderId, lineId, locationId);
     }
   } else {
     await input.persistSalesOrderId?.(salesOrderId);
+    await attachSalesOrderAddresses(salesOrderId, ...addressArgs);
+    await applyLineTaxesToExistingOrder(salesOrderId, input.lines, lineTaxes);
   }
 
-  await attachSalesOrderAddresses(salesOrderId, customerId, addressId, {
-    ...input.shipping,
-    fullName: input.fullName,
-  });
+  await setSalesOrderShippingCharge(salesOrderId, shippingCharge);
 
   const due = (await getSalesOrderBalance(salesOrderId)) ?? input.totalAmount;
   try {

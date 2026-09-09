@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { isAuthBypassEnabled } from "@/lib/auth-config";
+import { publicSiteUrl } from "@/lib/site-url";
 import { createClient } from "@/lib/supabase/server";
 
 export interface AuthResult {
@@ -71,12 +72,52 @@ export async function signUp(_prev: AuthResult | null, formData: FormData): Prom
   }
 
   const supabase = await createClient();
+
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+    const admin = createAdminClient();
+    const created = await admin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: { full_name: fullName },
+    });
+    if (created.error) {
+      const text = created.error.message.toLowerCase();
+      if (text.includes("already") || text.includes("registered") || text.includes("exists")) {
+        return { ok: false, message: "An account already exists for this email. Sign in instead." };
+      }
+      return { ok: false, message: created.error.message };
+    }
+    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+    if (signInError) {
+      return {
+        ok: false,
+        message: "Account created. Sign in with the same email and password.",
+      };
+    }
+    try {
+      const { linkOrdersToCustomer } = await import("@/lib/account-orders");
+      await linkOrdersToCustomer(admin, created.data.user!.id, email);
+    } catch (err) {
+      console.warn("Could not attach guest orders to new account:", err);
+    }
+    try {
+      const { sendWelcomeEmail } = await import("@/lib/email");
+      await sendWelcomeEmail({ email, fullName });
+    } catch (err) {
+      console.error("Welcome email failed:", err);
+    }
+    revalidatePath("/", "layout");
+    redirect("/account");
+  }
+
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
       data: { full_name: fullName },
-      emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/login`,
+      emailRedirectTo: `${publicSiteUrl()}/login`,
     },
   });
 

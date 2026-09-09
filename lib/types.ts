@@ -158,6 +158,7 @@ export interface Order {
   return_requested_at?: string | null;
   return_received_at?: string | null;
   shipping_address: ShippingAddress;
+  billing_address?: ShippingAddress | null;
   items: OrderItem[];
   created_at: string;
 }

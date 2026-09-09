@@ -4,13 +4,27 @@ import { FLAT_SHIPPING_RATE, FREE_SHIPPING_THRESHOLD } from "@/lib/constants";
 const GA_DEFAULT_RATE = 0.07;
 const GA_ATLANTA_RATE = 0.089;
 
-export function isGeorgia(state: string | null | undefined): boolean {
-  const value = state?.trim().toLowerCase() ?? "";
-  return value === "ga" || value === "georgia";
+function zipDigits(postalCode: string | null | undefined): string {
+  return (postalCode ?? "").replace(/\D/g, "");
+}
+
+function zipLooksLikeGeorgia(postalCode: string | null | undefined): boolean {
+  const prefix = Number(zipDigits(postalCode).slice(0, 3));
+  if (!Number.isFinite(prefix)) return false;
+  return (prefix >= 300 && prefix <= 319) || (prefix >= 398 && prefix <= 399);
+}
+
+export function isGeorgia(
+  state: string | null | undefined,
+  postalCode?: string | null
+): boolean {
+  const value = state?.trim().toLowerCase().replace(/\./g, "") ?? "";
+  if (value === "ga" || value === "georgia") return true;
+  return zipLooksLikeGeorgia(postalCode);
 }
 
 export function georgiaTaxRate(postalCode: string | null | undefined): number {
-  const zip = (postalCode ?? "").replace(/\D/g, "");
+  const zip = zipDigits(postalCode);
   if (zip.startsWith("303") || zip.startsWith("311")) return GA_ATLANTA_RATE;
   return GA_DEFAULT_RATE;
 }
@@ -21,7 +35,7 @@ export function estimateSalesTax(input: {
   postalCode?: string | null;
 }): number {
   if (input.taxableAmount <= 0) return 0;
-  if (!isGeorgia(input.state)) return 0;
+  if (!isGeorgia(input.state, input.postalCode)) return 0;
   const rate = georgiaTaxRate(input.postalCode);
   return Math.round(input.taxableAmount * rate * 100) / 100;
 }
