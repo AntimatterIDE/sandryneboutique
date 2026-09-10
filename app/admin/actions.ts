@@ -1232,12 +1232,12 @@ export async function buyOrderShippingLabel(
   if (error || !order) return { ok: false, message: "Order not found." };
 
   try {
-    const { buyUpsShippingLabel } = await import("@/lib/shipping-label");
+    const { buyCheckoutShippingLabel } = await import("@/lib/shipping-label");
     const paidCode =
       typeof order.shipping_service_code === "string" && order.shipping_service_code.trim()
         ? order.shipping_service_code.trim()
         : "03";
-    const label = await buyUpsShippingLabel(
+    const label = await buyCheckoutShippingLabel(
       order.shipping_address,
       serviceCode.trim() || paidCode
     );
@@ -1261,7 +1261,7 @@ export async function buyOrderShippingLabel(
     }
     return {
       ok: true,
-      message: `UPS billed your account${label.amount ? ` $${label.amount}` : ""}. Tracking ${label.trackingNumber}`,
+      message: `${label.carrier} billed your account${label.amount ? ` $${label.amount}` : ""}. Tracking ${label.trackingNumber}`,
       labelUrl: label.labelUrl,
     };
   } catch (err) {

@@ -1,5 +1,7 @@
 import "server-only";
 import { STORE_CONTACT } from "@/lib/constants";
+import { fedexConfigured, quoteFedExRates } from "@/lib/fedex";
+import { isFedExServiceCode, isFreeEligibleShippingService } from "@/lib/shipping-services";
 import type { ShippingAddress } from "@/lib/types";
 
 export interface UpsRate {
@@ -24,7 +26,7 @@ function upsConfigured(): boolean {
 }
 
 export function shippingLabelsConfigured(): boolean {
-  return upsConfigured();
+  return upsConfigured() || fedexConfigured();
 }
 
 function upsBaseUrl(): string {
@@ -306,7 +308,18 @@ export async function buyUpsShippingLabel(
 const CHECKOUT_SERVICE_CODES = new Set(["01", "02", "03", "12", "13", "14", "59"]);
 
 export function isFreeEligibleUpsService(code: string): boolean {
-  return code === "03" || code === "flat";
+  return isFreeEligibleShippingService(code);
+}
+
+export async function buyCheckoutShippingLabel(
+  shipping: ShippingAddress,
+  serviceCode = "03"
+): Promise<PurchasedLabel> {
+  const { buyFedExShippingLabel } = await import("@/lib/fedex");
+  if (isFedExServiceCode(serviceCode)) {
+    return buyFedExShippingLabel(shipping, serviceCode);
+  }
+  return buyUpsShippingLabel(shipping, serviceCode);
 }
 
 function serviceName(code: string): string {
@@ -342,18 +355,43 @@ export async function quoteCheckoutShippingOptions(shipping: ShippingAddress): P
   code: string;
   name: string;
 }[]> {
-  const rates = await quoteUpsRates(shipping);
-  const preferred = rates.filter((row) => CHECKOUT_SERVICE_CODES.has(row.code));
-  const list = (preferred.length > 0 ? preferred : rates)
-    .map((row) => {
-      const amount = Math.round(Number(row.amount) * 100) / 100;
-      return {
-        amount,
-        code: row.code,
-        name: displayServiceName(row.code, row.name),
-      };
-    })
-    .filter((row) => Number.isFinite(row.amount) && row.amount >= 0);
+  const tasks: Promise<{ amount: number; code: string; name: string }[]>[] = [];
+  if (upsConfigured()) {
+    tasks.push(
+      quoteUpsRates(shipping).then((rates) => {
+        const preferred = rates.filter((row) => CHECKOUT_SERVICE_CODES.has(row.code));
+        return (preferred.length > 0 ? preferred : rates)
+          .map((row) => {
+            const amount = Math.round(Number(row.amount) * 100) / 100;
+            return {
+              amount,
+              code: row.code,
+              name: displayServiceName(row.code, row.name),
+            };
+          })
+          .filter((row) => Number.isFinite(row.amount) && row.amount >= 0);
+      })
+    );
+  }
+  if (fedexConfigured()) {
+    tasks.push(quoteFedExRates(shipping));
+  }
+
+  if (tasks.length === 0) {
+    throw new Error("Add UPS or FedEx shipping keys in Vercel to quote live rates.");
+  }
+
+  const settled = await Promise.allSettled(tasks);
+  const list: { amount: number; code: string; name: string }[] = [];
+  const errors: string[] = [];
+  for (const result of settled) {
+    if (result.status === "fulfilled") list.push(...result.value);
+    else errors.push(result.reason instanceof Error ? result.reason.message : "Carrier quote failed.");
+  }
+
+  if (list.length === 0) {
+    throw new Error(errors.join(" ") || "Could not quote shipping for this address.");
+  }
 
   const seen = new Set<string>();
   return list

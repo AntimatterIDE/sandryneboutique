@@ -116,7 +116,7 @@ async function resolveCheckoutShipping(
     const options = await quoteCheckoutShippingOptions(shipping);
     const selected =
       options.find((option) => option.code === serviceCode) ??
-      options.find((option) => option.code === "03") ??
+      options.find((option) => isFreeEligibleUpsService(option.code) && option.code !== "flat") ??
       options[0];
     if (!selected) {
       return { amount: fallback, service: fallback === 0 ? "Free" : "Standard", code: "flat" };
@@ -128,7 +128,7 @@ async function resolveCheckoutShipping(
       code: selected.code,
     };
   } catch (err) {
-    console.warn("Checkout UPS quote failed; using standard shipping:", err);
+    console.warn("Checkout shipping quote failed; using standard shipping:", err);
     return { amount: fallback, service: fallback === 0 ? "Free" : "Standard", code: "flat" };
   }
 }

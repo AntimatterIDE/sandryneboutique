@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { TrustBadges } from "@/components/product/trust-badges";
 import { FLAT_SHIPPING_RATE, FREE_SHIPPING_THRESHOLD } from "@/lib/constants";
+import { isFreeEligibleShippingService } from "@/lib/shipping-services";
 import { checkoutTotals, isAddressQuotable, isGeorgia } from "@/lib/tax";
 import { discountAmount, findDiscount } from "@/lib/discounts";
 import { cartLineKey, cartSubtotal, useCart } from "@/lib/store/cart";
@@ -141,7 +142,7 @@ export function CheckoutForm({
   const selectedShippingCost =
     selectedRate == null
       ? null
-      : qualifiesFree && (selectedRate.code === "03" || selectedRate.code === "flat")
+      : qualifiesFree && isFreeEligibleShippingService(selectedRate.code)
         ? 0
         : selectedRate.amount;
   const shippingReady = selectedShippingCost != null;
@@ -180,7 +181,9 @@ export function CheckoutForm({
       if (cancelled) return;
       if (result.ok && result.rates.length > 0) {
         setShippingRates(result.rates);
-        const ground = result.rates.find((rate) => rate.code === "03");
+        const ground = result.rates.find(
+          (rate) => isFreeEligibleShippingService(rate.code) && rate.code !== "flat"
+        );
         const cheapest = result.rates[0];
         setSelectedShippingCode((qualifiesFree && ground ? ground : cheapest).code);
       } else {
@@ -452,15 +455,15 @@ export function CheckoutForm({
             </h2>
             {!addressReady ? (
               <p className="text-sm text-muted-foreground">
-                Enter your shipping address to see UPS options and prices.
+                Enter your shipping address to see UPS and FedEx options and prices.
               </p>
             ) : quoting ? (
-              <p className="text-sm text-muted-foreground">Calculating UPS rates…</p>
+              <p className="text-sm text-muted-foreground">Calculating shipping rates…</p>
             ) : (
               <div className="space-y-2">
                 {shippingRates.map((rate) => {
                   const price =
-                    qualifiesFree && (rate.code === "03" || rate.code === "flat") ? 0 : rate.amount;
+                    qualifiesFree && isFreeEligibleShippingService(rate.code) ? 0 : rate.amount;
                   return (
                     <label
                       key={rate.code}
@@ -485,8 +488,8 @@ export function CheckoutForm({
                 })}
                 {qualifiesFree ? (
                   <p className="text-[11px] text-muted-foreground leading-relaxed pt-1">
-                    Orders over {formatPrice(FREE_SHIPPING_THRESHOLD)} include free UPS Ground.
-                    Faster options are available at the quoted rate.
+                    Orders over {formatPrice(FREE_SHIPPING_THRESHOLD)} include free UPS Ground or
+                    FedEx Ground. Faster options are available at the quoted rate.
                   </p>
                 ) : null}
               </div>

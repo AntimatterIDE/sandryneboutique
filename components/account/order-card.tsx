@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { requestOrderReturn } from "@/app/(store)/account/actions";
+import { orderTrackingUrl } from "@/lib/tracking";
 import type { Order } from "@/lib/types";
 import {
   formatPrice,
@@ -39,9 +40,7 @@ export function AccountOrderCard({ order }: { order: Order }) {
     !order.return_requested_at &&
     !finalSaleOnly &&
     (order.status === "paid" || order.status === "shipped");
-  const trackingUrl = order.tracking_number
-    ? `https://www.ups.com/track?tracknum=${encodeURIComponent(order.tracking_number)}`
-    : null;
+  const trackingUrl = orderTrackingUrl(order);
 
   return (
     <article className="border border-foreground/10 p-6 space-y-4">

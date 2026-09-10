@@ -144,7 +144,7 @@ export function checkoutTotals(input: {
   discount?: number;
   state?: string | null;
   postalCode?: string | null;
-  /** Live UPS (or fallback) amount. Omit to use the flat rate. */
+  /** Live UPS/FedEx (or fallback) amount. Omit to use the flat rate. */
   shippingAmount?: number;
 }): { discountedSubtotal: number; shipping: number; tax: number; total: number } {
   const discountedSubtotal = Math.max(0, Math.round((input.subtotal - (input.discount ?? 0)) * 100) / 100);

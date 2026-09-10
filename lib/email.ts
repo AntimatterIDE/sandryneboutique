@@ -2,6 +2,7 @@ import "server-only";
 import { Resend } from "resend";
 import { publicSiteUrl } from "@/lib/site-url";
 import { SITE_EMAIL, SITE_NAME, STORE_CONTACT, STORE_NOTIFY_EMAIL } from "@/lib/constants";
+import { orderTrackingUrl } from "@/lib/tracking";
 import type { Order } from "@/lib/types";
 import { formatPrice, orderMoneyBreakdown, orderRefundBreakdown } from "@/lib/types";
 
@@ -49,9 +50,7 @@ function orderStatusLabel(order: Order): string {
 }
 
 function trackingUrl(order: Order): string | null {
-  const tracking = order.tracking_number?.trim();
-  if (!tracking) return null;
-  return `https://www.ups.com/track?tracknum=${encodeURIComponent(tracking)}`;
+  return orderTrackingUrl(order);
 }
 
 function itemRows(order: Order): string {
@@ -151,7 +150,7 @@ export async function sendShippingNotification(order: Order): Promise<void> {
     `
       <p>Good news — your Sandryne order is on its way.</p>
       <p style="font-size:13px;color:#666;font-family:system-ui,sans-serif;">
-        ${order.tracking_carrier ? escapeHtml(order.tracking_carrier) : "UPS"}
+        ${order.tracking_carrier ? escapeHtml(order.tracking_carrier) : "carrier"}
         ${order.tracking_number ? ` · ${escapeHtml(order.tracking_number)}` : ""}
       </p>
       ${track ? `<p><a href="${track}">Track your package</a></p>` : ""}

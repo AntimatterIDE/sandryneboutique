@@ -16,7 +16,7 @@ export const POLICIES: Policy[] = [
     slug: "shipping",
     title: "Shipping Policy",
     intro:
-      "All orders are shipped via UPS and include a tracking number for your convenience.",
+      "All orders are shipped via UPS or FedEx and include a tracking number for your convenience.",
     sections: [
       {
         heading: "Domestic shipping (within the USA)",
@@ -42,7 +42,7 @@ export const POLICIES: Policy[] = [
       {
         heading: "Damaged or lost packages",
         body: [
-          "Once an order leaves our facility, it is in the care of UPS. If your package is lost, stolen, or damaged during transit, please contact UPS directly with your tracking number for assistance. Unfortunately, Sandryne Boutique cannot be held liable for such incidents.",
+          "Once an order leaves our facility, it is in the care of UPS or FedEx. If your package is lost, stolen, or damaged during transit, please contact the carrier directly with your tracking number for assistance. Unfortunately, Sandryne Boutique cannot be held liable for such incidents.",
         ],
       },
       {

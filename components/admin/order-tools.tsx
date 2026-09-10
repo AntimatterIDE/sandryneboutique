@@ -11,6 +11,7 @@ import {
   refundOrder,
   saveOrderTracking,
 } from "@/app/admin/actions";
+import { isFedExServiceCode } from "@/lib/shipping-services";
 import type { Order } from "@/lib/types";
 import {
   formatPrice,
@@ -70,7 +71,9 @@ export function OrderTools({
     }
     if (
       !confirm(
-        `Print ${serviceName} label? This bills the boutique UPS account and opens the label. The customer already paid shipping at checkout.`
+        `Print ${serviceName} label? This bills the boutique ${
+          isFedExServiceCode(serviceCode) ? "FedEx" : "UPS"
+        } account and opens the label. The customer already paid shipping at checkout.`
       )
     ) {
       return;
@@ -223,10 +226,10 @@ export function OrderTools({
             )
           ) : (
             <p className="text-[11px] text-muted-foreground leading-relaxed">
-              Add <code className="text-[10px]">UPS_CLIENT_ID</code>,{" "}
-              <code className="text-[10px]">UPS_CLIENT_SECRET</code>, and{" "}
-              <code className="text-[10px]">UPS_ACCOUNT_NUMBER</code> in Vercel to print labels
-              here.
+              Add UPS and/or FedEx keys in Vercel to print labels here. FedEx needs{" "}
+              <code className="text-[10px]">FEDEX_API_KEY</code>,{" "}
+              <code className="text-[10px]">FEDEX_SECRET_KEY</code>, and{" "}
+              <code className="text-[10px]">FEDEX_ACCOUNT_NUMBER</code>.
             </p>
           )}
 
