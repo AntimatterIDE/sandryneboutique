@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createPrivilegedClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSessionInfo } from "@/lib/auth";
+import { CATEGORY_TILE_SLOTS } from "@/lib/homepage-defaults";
 import {
   ORDER_STATUSES,
   formatPrice,
@@ -758,7 +759,7 @@ function validateHomepageSection(id: string, input: HomepageSectionInput): strin
   if (input.image_url?.trim() && !isValidHomepageImageUrl(input.image_url.trim())) {
     return "Hero image must be a site path or an http(s) URL.";
   }
-  if (id === "hero") return null;
+  if (id === "hero" || id.startsWith("category_tile_")) return null;
   if (!Number.isInteger(input.max_items) || input.max_items < 1 || input.max_items > 24) {
     return "Max products must be between 1 and 24.";
   }
@@ -779,23 +780,26 @@ export async function updateHomepageSection(
   if (invalid) return { ok: false, message: invalid };
 
   const supabase = await createPrivilegedClient();
+  const isHero = id === "hero";
+  const isCategoryTile = id.startsWith("category_tile_");
+  const tileSlot = CATEGORY_TILE_SLOTS.find((slot) => slot.id === id);
   const fields = {
     title: input.title.trim(),
     subtitle: input.subtitle.trim(),
     cta_label: input.cta_label.trim(),
     cta_href: input.cta_href.trim(),
-    product_ids: id === "hero" ? [] : input.product_ids,
-    max_items: id === "hero" ? 8 : input.max_items,
+    product_ids: isHero ? [] : input.product_ids,
+    max_items: isHero ? 8 : isCategoryTile ? 1 : input.max_items,
     enabled: input.enabled,
     updated_at: new Date().toISOString(),
   };
 
   const { error } =
-    id === "hero"
+    isHero || isCategoryTile
       ? await supabase.from("homepage_sections").upsert({
-          id: "hero",
-          label: "Hero",
-          sort_order: 0,
+          id,
+          label: isHero ? "Hero" : `Category tile — ${tileSlot?.label ?? "Category"}`,
+          sort_order: isHero ? 0 : tileSlot ? CATEGORY_TILE_SLOTS.indexOf(tileSlot) + 3 : 5,
           image_url: input.image_url?.trim() || null,
           ...fields,
         })
@@ -809,13 +813,22 @@ export async function updateHomepageSection(
       ok: false,
       message: needsHeroColumn
         ? "Failed to save hero. Run migration 014_homepage_hero.sql in the Supabase SQL Editor."
+        : id.startsWith("category_tile_")
+          ? "Failed to save category photos. Confirm homepage_sections exists in Supabase."
         : "Failed to save section. Confirm migration 005_homepage_sections.sql was run in Supabase.",
     };
   }
 
   revalidatePath("/");
   revalidatePath("/admin/homepage");
-  return { ok: true, message: id === "hero" ? "Hero saved." : "Homepage section saved." };
+  return {
+    ok: true,
+    message: id === "hero"
+      ? "Hero saved."
+      : id.startsWith("category_tile_")
+        ? "Category photo saved."
+        : "Homepage section saved.",
+  };
 }
 
 export async function deleteNewsletterSubscriber(id: string): Promise<ActionResult> {

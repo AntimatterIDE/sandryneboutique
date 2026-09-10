@@ -1,28 +1,17 @@
 import Image from "next/image";
 import Link from "next/link";
+import type { CategoryShowcaseTile } from "@/lib/data/homepage";
 
-const CATEGORY_TILES = [
-  {
-    slug: "bottoms",
-    label: "Bottoms",
-    image:
-      "https://images.unsplash.com/photo-1541099649105-f69ad21f3246?q=80&w=800&auto=format&fit=crop",
-  },
-  {
-    slug: "dresses",
-    label: "Dresses",
-    image:
-      "https://images.unsplash.com/photo-1595777457583-95e059d581b8?q=80&w=800&auto=format&fit=crop",
-  },
-  {
-    slug: "tops",
-    label: "Tops",
-    image:
-      "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?q=80&w=800&auto=format&fit=crop",
-  },
-];
+interface CategoryShowcaseProps {
+  tiles: CategoryShowcaseTile[];
+}
 
-export function CategoryShowcase() {
+export function CategoryShowcase({ tiles }: CategoryShowcaseProps) {
+  const bySlug = new Map(tiles.map((tile) => [tile.slug, tile]));
+  const bottoms = bySlug.get("bottoms");
+  const dresses = bySlug.get("dresses");
+  const tops = bySlug.get("tops");
+
   return (
     <section className="mx-auto max-w-7xl px-4 sm:px-6 py-20 sm:py-28 below-fold-section">
       <div className="mb-12 sm:mb-16 max-w-3xl">
@@ -32,21 +21,21 @@ export function CategoryShowcase() {
         <p className="font-serif text-3xl sm:text-5xl leading-[1.15] tracking-tight">
           Tailored{" "}
           <Link
-            href="/shop?category=bottoms"
+            href={bottoms?.href ?? "/shop?category=bottoms"}
             className="italic underline decoration-1 underline-offset-8 decoration-foreground/30 hover:decoration-foreground transition-colors"
           >
             bottoms
           </Link>
           , fluid{" "}
           <Link
-            href="/shop?category=dresses"
+            href={dresses?.href ?? "/shop?category=dresses"}
             className="italic underline decoration-1 underline-offset-8 decoration-foreground/30 hover:decoration-foreground transition-colors"
           >
             dresses
           </Link>
           , and crisp{" "}
           <Link
-            href="/shop?category=tops"
+            href={tops?.href ?? "/shop?category=tops"}
             className="italic underline decoration-1 underline-offset-8 decoration-foreground/30 hover:decoration-foreground transition-colors"
           >
             tops
@@ -56,10 +45,10 @@ export function CategoryShowcase() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6">
-        {CATEGORY_TILES.map((tile) => (
+        {tiles.map((tile) => (
           <Link
             key={tile.slug}
-            href={`/shop?category=${tile.slug}`}
+            href={tile.href}
             className="group block relative overflow-hidden"
           >
             <div className="relative aspect-3/4 bg-muted">

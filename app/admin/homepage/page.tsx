@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { CategoryTilesForm } from "@/components/admin/category-tiles-form";
 import { HomepageSectionForm } from "@/components/admin/homepage-section-form";
 import { getHomepageSections } from "@/lib/data/homepage";
 import { createPrivilegedClient } from "@/lib/supabase/server";
@@ -28,15 +29,27 @@ export default async function AdminHomepagePage() {
       <header>
         <h1 className="font-serif text-3xl tracking-tight">Homepage</h1>
         <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
-          Change the homepage hero photo, then curate the featured carousel and
-          new-arrivals grid. Empty product lists auto-fill from the catalog.
+          Change the homepage hero photo, the three category tiles, then curate
+          the featured carousel and new-arrivals grid. Empty product lists
+          auto-fill from the catalog.
         </p>
       </header>
 
       <div className="space-y-6">
-        {sections.map((section) => (
-          <HomepageSectionForm key={section.id} section={section} products={products} />
-        ))}
+        {sections
+          .filter((section) => section.id === "hero")
+          .map((section) => (
+            <HomepageSectionForm key={section.id} section={section} products={products} />
+          ))}
+        <CategoryTilesForm
+          sections={sections.filter((section) => section.id.startsWith("category_tile_"))}
+          products={products}
+        />
+        {sections
+          .filter((section) => !section.id.startsWith("category_tile_") && section.id !== "hero")
+          .map((section) => (
+            <HomepageSectionForm key={section.id} section={section} products={products} />
+          ))}
       </div>
     </div>
   );

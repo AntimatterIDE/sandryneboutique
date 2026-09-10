@@ -12,6 +12,7 @@ import { createClient } from "@/lib/supabase/client";
 interface HeroImageFieldProps {
   value: string;
   onChange: (url: string) => void;
+  buttonLabel?: string;
 }
 
 function looksLikeImage(file: File): boolean {
@@ -19,7 +20,11 @@ function looksLikeImage(file: File): boolean {
   return /\.(avif|gif|jpe?g|png|webp)$/i.test(file.name);
 }
 
-export function HeroImageField({ value, onChange }: HeroImageFieldProps) {
+export function HeroImageField({
+  value,
+  onChange,
+  buttonLabel = "Upload hero image",
+}: HeroImageFieldProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [urlDraft, setUrlDraft] = useState("");
@@ -133,7 +138,7 @@ export function HeroImageField({ value, onChange }: HeroImageFieldProps) {
           className="rounded-none text-[11px] tracking-[0.16em] uppercase gap-2"
         >
           {uploading ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
-          Upload hero image
+          {buttonLabel}
         </Button>
         <div className="flex flex-1 gap-2">
           <Input

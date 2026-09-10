@@ -9,6 +9,7 @@ import { ProductCard } from "@/components/product/product-card";
 import RevealText from "@/components/react-bits/reveal-text";
 import { LazySection } from "@/components/ui/lazy-section";
 import {
+  getCategoryShowcaseTiles,
   getHomepageSections,
   getSectionProducts,
 } from "@/lib/data/homepage";
@@ -64,9 +65,10 @@ export default async function HomePage() {
   const carousel = sections.find((s) => s.id === "featured_carousel");
   const arrivals = sections.find((s) => s.id === "new_arrivals");
 
-  const [carouselProducts, arrivalProducts] = await Promise.all([
+  const [carouselProducts, arrivalProducts, categoryTiles] = await Promise.all([
     carousel?.enabled ? getSectionProducts(carousel) : Promise.resolve([]),
     arrivals?.enabled ? getSectionProducts(arrivals) : Promise.resolve([]),
+    getCategoryShowcaseTiles(sections),
   ]);
 
   return (
@@ -79,7 +81,7 @@ export default async function HomePage() {
         ctaHref={hero?.cta_href}
       />
       <TaglineMarquee />
-      <CategoryShowcase />
+      <CategoryShowcase tiles={categoryTiles} />
 
       {carousel?.enabled && carouselProducts.length > 0 && (
         <LazySection minHeight="540px" rootMargin="80px" className="below-fold-section">

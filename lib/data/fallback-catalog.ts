@@ -128,7 +128,7 @@ export const FALLBACK_PRODUCTS: Product[] = [
       "The perfect white shirt, reconsidered. Relaxed through the body with a sharp collar and mother-of-pearl buttons.",
     price: 98,
     images: [
-      "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?q=80&w=1200&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1485968579580-b6d095142e6e?q=80&w=1200&auto=format&fit=crop",
       "https://images.unsplash.com/photo-1434389677669-e08b4cac3105?q=80&w=1200&auto=format&fit=crop",
     ],
     inventory_count: 26,

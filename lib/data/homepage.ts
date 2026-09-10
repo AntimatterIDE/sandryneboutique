@@ -1,7 +1,19 @@
 import { createClient } from "@/lib/supabase/server";
 import { getProducts, getProductsByIds, supabaseConfigured } from "@/lib/data/products";
-import { DEFAULT_HERO_IMAGE } from "@/lib/homepage-defaults";
+import {
+  CATEGORY_TILE_SLOTS,
+  DEFAULT_CATEGORY_TILE_IMAGES,
+  DEFAULT_HERO_IMAGE,
+  type CategoryTileSlug,
+} from "@/lib/homepage-defaults";
 import type { HomepageSection, Product } from "@/lib/types";
+
+export interface CategoryShowcaseTile {
+  slug: CategoryTileSlug;
+  label: string;
+  href: string;
+  image: string;
+}
 
 const DEFAULT_SECTIONS: HomepageSection[] = [
   {
@@ -46,6 +58,20 @@ const DEFAULT_SECTIONS: HomepageSection[] = [
     image_url: "",
     updated_at: new Date(0).toISOString(),
   },
+  ...CATEGORY_TILE_SLOTS.map((slot, index) => ({
+    id: slot.id,
+    label: `Category tile — ${slot.label}`,
+    title: slot.label,
+    subtitle: "Shop by Category",
+    cta_label: "Shop now",
+    cta_href: slot.href,
+    product_ids: [] as string[],
+    max_items: 1,
+    enabled: true,
+    sort_order: 3 + index,
+    image_url: "",
+    updated_at: new Date(0).toISOString(),
+  })),
 ];
 
 function normalizeSection(row: HomepageSection): HomepageSection {
@@ -107,4 +133,40 @@ export async function getSectionProducts(section: HomepageSection): Promise<Prod
   }
 
   return getProducts({ sort: "newest", shoppableOnly: true, limit });
+}
+
+function fallbackTileImage(slug: CategoryTileSlug): string {
+  return DEFAULT_CATEGORY_TILE_IMAGES[slug];
+}
+
+/** Three homepage category tiles: admin product/photo, else a live catalog photo. */
+export async function getCategoryShowcaseTiles(
+  sections: HomepageSection[]
+): Promise<CategoryShowcaseTile[]> {
+  return Promise.all(
+    CATEGORY_TILE_SLOTS.map(async (slot) => {
+      const section = sections.find((row) => row.id === slot.id);
+      const override = section?.image_url?.trim();
+      let product: Product | null = null;
+      const pickedId = section?.product_ids?.[0];
+      if (pickedId) {
+        const found = await getProductsByIds([pickedId]);
+        product = found[0] ?? null;
+      }
+      if (!product) {
+        const catalog = await getProducts({
+          category: slot.slug,
+          shoppableOnly: true,
+          limit: 1,
+        });
+        product = catalog[0] ?? null;
+      }
+      return {
+        slug: slot.slug,
+        label: section?.title?.trim() || slot.label,
+        href: section?.cta_href?.trim() || slot.href,
+        image: override || product?.images[0] || fallbackTileImage(slot.slug),
+      };
+    })
+  );
 }
