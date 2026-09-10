@@ -909,7 +909,10 @@ export async function refundOrder(
     return { ok: false, message: result.message ?? "Refund failed." };
   }
 
-  const restock = await restockOrderInHeartlandAndSite(supabase, order);
+  const restock = await restockOrderInHeartlandAndSite(supabase, order, {
+    refundAmount: remaining,
+    allowOnHandIncrease: !isOrderInventoryRestocked(order),
+  });
 
   const refundedAt = new Date().toISOString();
   const { error: refundUpdateError } = await supabase
@@ -993,8 +996,9 @@ async function restockOrderInHeartlandAndSite(
     shipping_address?: { full_name?: string } | null;
     heartland_sales_order_id?: number | null;
     heartland_sync_error?: string | null;
+    heartland_transaction_id?: string | null;
   },
-  options?: { allowOnHandIncrease?: boolean }
+  options?: { allowOnHandIncrease?: boolean; refundAmount?: number }
 ): Promise<{ ok: boolean; detail: string; items: import("@/lib/types").OrderItem[] }> {
   const items = (order.items ?? []) as import("@/lib/types").OrderItem[];
   const { salesOrderIdFromRetailError, restockRetailInventory } = await import(
@@ -1008,6 +1012,8 @@ async function restockOrderInHeartlandAndSite(
       existingSalesOrderId:
         order.heartland_sales_order_id ?? salesOrderIdFromRetailError(order.heartland_sync_error),
       allowOnHandIncrease: options?.allowOnHandIncrease,
+      refundAmount: options?.refundAmount,
+      porticoTransactionId: order.heartland_transaction_id,
       lines: items
         .filter((item) => item.heartland_item_id != null)
         .map((item) => ({
@@ -1064,11 +1070,20 @@ export async function markReturnReceived(orderId: string): Promise<ActionResult>
   }
 
   const receivedAt = new Date().toISOString();
+  const money = orderRefundBreakdown(order);
+  const restock = await restockOrderInHeartlandAndSite(supabase, order, {
+    refundAmount: money.refundable,
+    allowOnHandIncrease: !isOrderInventoryRestocked(order),
+  });
+
   const { error: updateError } = await supabase
     .from("orders")
     .update({
       return_requested_at: order.return_requested_at ?? receivedAt,
       return_received_at: receivedAt,
+      heartland_sync_status: restock.ok ? "synced" : "failed",
+      heartland_sync_error: restock.ok ? null : restock.detail.slice(0, 1000),
+      inventory_restocked_at: restock.ok ? receivedAt : undefined,
     })
     .eq("id", orderId);
   if (updateError) {
@@ -1079,9 +1094,27 @@ export async function markReturnReceived(orderId: string): Promise<ActionResult>
     };
   }
 
+  if (restock.ok) {
+    await markInventoryRestocked(supabase, orderId);
+  }
   revalidatePath("/admin/orders");
   revalidatePath("/account");
-  return { ok: true, message: "Return received. You can now refund merchandise and tax." };
+  revalidatePath("/shop");
+  for (const item of restock.items) {
+    if (item.slug) revalidatePath(`/products/${item.slug}`);
+  }
+
+  if (!restock.ok) {
+    return {
+      ok: true,
+      message: `Return received, but Heartland was not updated: ${restock.detail} Refund the card next, then check the sales order payments and inventory.`,
+    };
+  }
+  return {
+    ok: true,
+    message:
+      "Return received. Heartland now has the refund tender and the item is back in available inventory. Refund the card next.",
+  };
 }
 
 export async function syncInventoryFromHeartland(): Promise<ActionResult> {

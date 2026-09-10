@@ -119,7 +119,16 @@ export function OrderTools({
               <Button
                 type="button"
                 disabled={pending}
-                onClick={() => run(() => markReturnReceived(order.id))}
+                onClick={() => {
+                  if (
+                    !confirm(
+                      "Mark this return received? Heartland will record a refund tender on the sales order and put the item back in available inventory. Refund the card after that."
+                    )
+                  ) {
+                    return;
+                  }
+                  run(() => markReturnReceived(order.id));
+                }}
                 className="rounded-none tracking-[0.12em] uppercase text-xs"
               >
                 Mark return received

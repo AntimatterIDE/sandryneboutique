@@ -1081,6 +1081,129 @@ async function salesOrderHasItems(orderId: number, itemIds: Set<number>): Promis
   }
 }
 
+async function listInvoicesForOrder(salesOrderId: number): Promise<number[]> {
+  try {
+    const filter = encodeURIComponent(JSON.stringify({ order_id: salesOrderId }));
+    const { body } = await retailFetch(`/sales/invoices?_filter[]=${filter}&per_page=20`);
+    return ((body as SearchResult<{ id: number }>).results ?? [])
+      .map((invoice) => invoice.id)
+      .filter((id) => Number.isFinite(id) && id > 0);
+  } catch (err) {
+    console.warn("Heartland Retail invoice lookup skipped:", err);
+    return [];
+  }
+}
+
+async function listOrderPayments(
+  orderId: number
+): Promise<{ id: number; amount: number; status?: string }[]> {
+  try {
+    const { body } = await retailFetch(`/sales/orders/${orderId}/payments?per_page=50`);
+    const result = body as SearchResult<{ id: number; amount?: number; status?: string }>;
+    if (Array.isArray(result.results)) {
+      return result.results.map((row) => ({
+        id: row.id,
+        amount: Number(row.amount) || 0,
+        status: row.status,
+      }));
+    }
+    if (Array.isArray(body)) {
+      return (body as { id: number; amount?: number; status?: string }[]).map((row) => ({
+        id: row.id,
+        amount: Number(row.amount) || 0,
+        status: row.status,
+      }));
+    }
+  } catch (err) {
+    console.warn("Heartland Retail order payments list skipped:", err);
+  }
+  try {
+    const { body } = await retailFetch(`/sales/orders/${orderId}?_include[]=payments`);
+    const payments = (body as { payments?: { id: number; amount?: number; status?: string }[] }).payments ?? [];
+    return payments.map((row) => ({
+      id: row.id,
+      amount: Number(row.amount) || 0,
+      status: row.status,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function hasMatchingRefundTender(
+  payments: { amount: number }[],
+  refundAmount: number
+): boolean {
+  const target = Math.round(Math.abs(refundAmount) * 100) / 100;
+  if (target <= 0) return false;
+  return payments.some((payment) => {
+    const amount = Number(payment.amount);
+    return Number.isFinite(amount) && amount < 0 && Math.abs(Math.abs(amount) - target) <= 0.02;
+  });
+}
+
+/** Post a refund tender on the original sales order so it shows under Payments. */
+export async function addRefundTenderToSalesOrder(
+  orderId: number,
+  refundAmount: number,
+  options?: { paymentTypeId?: number; reference?: string }
+): Promise<number | null> {
+  const amount = Math.round(Math.abs(refundAmount) * 100) / 100;
+  if (amount <= 0) return null;
+
+  const existing = await listOrderPayments(orderId);
+  if (hasMatchingRefundTender(existing, amount)) return existing.find((p) => p.amount < 0)?.id ?? null;
+
+  const paymentTypeId = options?.paymentTypeId ?? Number(process.env.HEARTLAND_RETAIL_WEB_PAYMENT_TYPE);
+  const refund = -amount;
+  const attempts: Record<string, unknown>[] = [
+    {
+      type: "CustomPayment",
+      deposit: true,
+      amount: refund,
+      ...(Number.isFinite(paymentTypeId) && paymentTypeId > 0 ? { payment_type_id: paymentTypeId } : {}),
+      ...(options?.reference ? { custom: { portico_transaction_id: options.reference } } : {}),
+    },
+    {
+      type: "Payments::CustomPayment",
+      deposit: true,
+      amount: refund,
+      ...(Number.isFinite(paymentTypeId) && paymentTypeId > 0 ? { payment_type_id: paymentTypeId } : {}),
+    },
+    {
+      type: "CustomPayment",
+      deposit: true,
+      amount: refund,
+    },
+    {
+      type: "ExternalPayment",
+      deposit: true,
+      amount: refund,
+      ...(options?.reference ? { reference: options.reference } : {}),
+    },
+    {
+      type: "CashPayment",
+      deposit: true,
+      amount: refund,
+    },
+  ];
+
+  let lastError: unknown;
+  for (const payload of attempts) {
+    try {
+      const { res } = await retailFetch(`/sales/orders/${orderId}/payments`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      return parseLocationId(res.headers.get("location"));
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  console.warn("Heartland Retail refund tender on sales order failed:", lastError);
+  return null;
+}
+
 /**
  * Heartland Return ticket: negative qty + complete, which restocks on-hand.
  * Completing a return is different from voiding a pending sales order.
@@ -1089,9 +1212,11 @@ export async function createRetailReturn(input: {
   customerId: number;
   lines: RetailCheckoutLine[];
   parentInvoiceId?: number;
+  refundAmount?: number;
 }): Promise<number> {
   const stationId = Number(process.env.HEARTLAND_RETAIL_STATION_ID);
   const locationId = Number(process.env.HEARTLAND_RETAIL_LOCATION_ID);
+  const paymentTypeId = Number(process.env.HEARTLAND_RETAIL_WEB_PAYMENT_TYPE);
 
   const createAttempts: Record<string, unknown>[] = [
     {
@@ -1155,21 +1280,49 @@ export async function createRetailReturn(input: {
     }
   }
 
+  const paymentAttempts: Record<string, unknown>[] = [];
+  if (input.refundAmount != null && input.refundAmount !== 0) {
+    const refund = -Math.abs(roundMoney(input.refundAmount));
+    paymentAttempts.push(
+      {
+        type: "CustomPayment",
+        amount: refund,
+        deposit: true,
+        ...(Number.isFinite(paymentTypeId) && paymentTypeId > 0 ? { payment_type_id: paymentTypeId } : {}),
+      },
+      { type: "Payments::CustomPayment", amount: refund, deposit: true },
+      { type: "CashPayment", amount: refund }
+    );
+  }
   try {
     const { body } = await retailFetch(`/sales/tickets/${ticketId}`);
     const ticket = body as { balance?: number; total?: number };
     const due = typeof ticket.balance === "number" ? ticket.balance : ticket.total;
     if (typeof due === "number" && due !== 0) {
-      await retailFetch(`/sales/tickets/${ticketId}/payments`, {
-        method: "POST",
-        body: JSON.stringify({
-          type: "CashPayment",
+      paymentAttempts.push(
+        {
+          type: "CustomPayment",
           amount: due,
-        }),
-      });
+          deposit: true,
+          ...(Number.isFinite(paymentTypeId) && paymentTypeId > 0 ? { payment_type_id: paymentTypeId } : {}),
+        },
+        { type: "CashPayment", amount: due }
+      );
     }
   } catch (err) {
-    console.warn("Heartland Retail return payment skipped:", err);
+    console.warn("Heartland Retail return ticket balance skipped:", err);
+  }
+
+  for (const payload of paymentAttempts) {
+    try {
+      await retailFetch(`/sales/tickets/${ticketId}/payments`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      break;
+    } catch {
+      // Try the next tender shape.
+    }
   }
 
   await retailFetch(`/sales/tickets/${ticketId}`, {
@@ -1256,104 +1409,82 @@ async function completeInventoryAdjustment(lines: RetailCheckoutLine[]): Promise
 }
 
 /**
- * Refund path: void leftover sales orders (releases committed qty).
- * Add on-hand only when the unit was actually sold — never while qty is
- * still committed, and never a second time for the same shortfall.
+ * Customer return: record a refund tender on the sales order, complete a
+ * Return ticket against the original invoice (restocks available qty), and
+ * adjust on-hand if Heartland still did not put the units back.
+ * Do not void a paid/invoiced sales order — that hides the original sale.
  */
 export async function restockRetailInventory(input: {
   email: string;
   fullName: string;
   lines: RetailCheckoutLine[];
   existingSalesOrderId?: number | null;
+  refundAmount?: number;
+  porticoTransactionId?: string | null;
   /** False when the order was already refunded so on-hand is not increased twice. */
   allowOnHandIncrease?: boolean;
 }): Promise<{
   returnTicketId: number | null;
   voidedOrderIds: number[];
   adjustmentSetId: number | null;
+  refundPaymentId: number | null;
 }> {
-  const itemIds = new Set(input.lines.map((line) => line.heartlandItemId));
-  const voidedOrderIds: number[] = [];
   const before = await snapshotsForLines(input.lines);
   const customerId = await upsertCustomerByEmail({
     email: input.email,
     fullName: input.fullName,
   });
 
-  const candidateIds = new Set<number>();
-  if (input.existingSalesOrderId) candidateIds.add(input.existingSalesOrderId);
+  const salesOrderId = input.existingSalesOrderId ?? null;
+  const invoices = salesOrderId ? await listInvoicesForOrder(salesOrderId) : [];
+  const parentInvoiceId = invoices[0];
+  const refundAmount = Math.round(Math.abs(input.refundAmount ?? 0) * 100) / 100;
+  const paymentTypeId = Number(process.env.HEARTLAND_RETAIL_WEB_PAYMENT_TYPE);
 
-  try {
-    const orders = await listCustomerSalesOrders(customerId);
-    for (const order of orders) {
-      const status = (order.status ?? "").toLowerCase();
-      if (status === "void" || status === "cancelled" || status === "canceled") continue;
-      if (candidateIds.has(order.id) || (await salesOrderHasItems(order.id, itemIds))) {
-        candidateIds.add(order.id);
-      }
-    }
-  } catch (err) {
-    console.warn("Heartland Retail customer order search skipped:", err);
-  }
-
-  let parentInvoiceId: number | undefined;
-  for (const orderId of candidateIds) {
-    try {
-      const invoiceId = await voidInvoicesForOrder(orderId);
-      if (invoiceId) parentInvoiceId = parentInvoiceId ?? invoiceId;
-      await voidSalesOrder(orderId);
-      voidedOrderIds.push(orderId);
-    } catch (err) {
-      console.warn(`Heartland Retail sales order ${orderId} void skipped:`, err);
-    }
+  let refundPaymentId: number | null = null;
+  if (salesOrderId && refundAmount > 0) {
+    refundPaymentId = await addRefundTenderToSalesOrder(salesOrderId, refundAmount, {
+      paymentTypeId,
+      reference: input.porticoTransactionId ?? undefined,
+    });
   }
 
   const allowOnHandIncrease = input.allowOnHandIncrease !== false;
-  const afterVoid = await snapshotsForLines(input.lines);
-  const soldShortfall = allowOnHandIncrease
-    ? input.lines.filter((line) => {
-        const start = before.get(line.heartlandItemId);
-        const now = afterVoid.get(line.heartlandItemId);
-        if (!start || !now) return false;
-        if (now.committed > 0) return false;
-        if (now.available > start.available) return false;
-        if (now.onHand > start.onHand) return false;
-        return now.available === start.available && now.onHand === start.onHand;
-      })
-    : [];
-
   let returnTicketId: number | null = null;
   let adjustmentSetId: number | null = null;
-  if (soldShortfall.length > 0) {
+
+  if (allowOnHandIncrease && input.lines.length > 0) {
     try {
       returnTicketId = await createRetailReturn({
         customerId,
-        lines: soldShortfall,
+        lines: input.lines,
         parentInvoiceId,
+        refundAmount: refundAmount || undefined,
       });
     } catch (err) {
       console.error("Heartland Retail return ticket failed:", err);
     }
 
-    const afterReturn = await snapshotsForLines(soldShortfall);
-    const stillSold = soldShortfall.filter((line) => {
+    const afterReturn = await snapshotsForLines(input.lines);
+    const stillOut = input.lines.filter((line) => {
       const start = before.get(line.heartlandItemId);
       const now = afterReturn.get(line.heartlandItemId);
-      return Boolean(start && now && now.committed === 0 && now.onHand < start.onHand);
+      if (!start || !now) return true;
+      return now.available <= start.available && now.onHand <= start.onHand;
     });
-    if (stillSold.length > 0) {
-      adjustmentSetId = await completeInventoryAdjustment(
-        stillSold.map((line) => {
-          const start = before.get(line.heartlandItemId);
-          const now = afterReturn.get(line.heartlandItemId);
-          const missing = Math.max(0, (start?.onHand ?? 0) - (now?.onHand ?? 0));
-          return { ...line, quantity: missing || line.quantity };
-        })
-      );
+    if (stillOut.length > 0) {
+      try {
+        adjustmentSetId = await completeInventoryAdjustment(stillOut);
+      } catch (err) {
+        console.error("Heartland Retail inventory adjustment failed:", err);
+        if (!returnTicketId) {
+          throw err instanceof Error ? err : new Error("Could not return inventory in Heartland.");
+        }
+      }
     }
   }
 
-  return { returnTicketId, voidedOrderIds, adjustmentSetId };
+  return { returnTicketId, voidedOrderIds: [], adjustmentSetId, refundPaymentId };
 }
 
 export interface RetailCheckoutLine {
