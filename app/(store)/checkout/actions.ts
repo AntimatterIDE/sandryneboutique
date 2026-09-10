@@ -304,6 +304,7 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
         quantity: line.quantity,
         size: variant.size ?? line.size,
         color: variant.color ?? line.color,
+        final_sale: Boolean(product.on_sale),
       });
       continue;
     }
@@ -335,6 +336,7 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
       quantity: line.quantity,
       size: line.size,
       color: line.color,
+      final_sale: Boolean(product.on_sale),
     });
   }
 

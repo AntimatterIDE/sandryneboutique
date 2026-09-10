@@ -12,7 +12,13 @@ import {
   saveOrderTracking,
 } from "@/app/admin/actions";
 import type { Order } from "@/lib/types";
-import { formatPrice, isOrderReturned, orderRefundBreakdown } from "@/lib/types";
+import {
+  formatPrice,
+  isOrderReturned,
+  orderHasFinalSale,
+  orderIsFinalSaleOnly,
+  orderRefundBreakdown,
+} from "@/lib/types";
 
 export function OrderTools({
   order,
@@ -44,6 +50,9 @@ export function OrderTools({
 
   const refunded = refundedLocal || isOrderReturned(order) || order.status === "cancelled";
   const money = orderRefundBreakdown(order);
+  const fullRefund = orderRefundBreakdown(order, { includeFinalSale: true });
+  const saleOnly = orderIsFinalSaleOnly(order);
+  const hasSale = orderHasFinalSale(order);
   const returnRequested = Boolean(order.return_requested_at);
   const returnReceived = Boolean(order.return_received_at);
   const shippedOrder = order.status === "shipped" || Boolean(order.tracking_number);
@@ -125,34 +134,51 @@ export function OrderTools({
               disabled={
                 pending ||
                 !order.heartland_transaction_id ||
-                money.refundable <= 0 ||
+                (money.refundable <= 0 && !saleOnly) ||
+                (saleOnly && fullRefund.refundable <= 0) ||
                 waitForReturn
               }
               onClick={() => {
+                const amount = money.refundable > 0 ? money.refundable : fullRefund.refundable;
+                const overrideSale = money.refundable <= 0 && saleOnly;
                 const keep =
                   money.shippingKept > 0
                     ? ` The customer still pays ${formatPrice(money.shippingKept)} shipping.`
                     : "";
+                const saleNote = hasSale
+                  ? overrideSale
+                    ? " This order is final sale. Refund anyway?"
+                    : " Sale items stay charged."
+                  : "";
                 if (
                   !confirm(
-                    `Refund ${formatPrice(money.refundable)} for merchandise and tax?${keep} Heartland inventory will update automatically.`
+                    `Refund ${formatPrice(amount)} for merchandise and tax?${keep}${saleNote} Heartland inventory will update automatically.`
                   )
                 ) {
                   return;
                 }
-                run(() => refundOrder(order.id));
+                run(() => refundOrder(order.id, { includeFinalSale: overrideSale }));
               }}
               className="rounded-none tracking-[0.12em] uppercase text-xs"
             >
-              Refund {formatPrice(money.refundable)}
+              {money.refundable > 0
+                ? `Refund ${formatPrice(money.refundable)}`
+                : saleOnly
+                  ? `Refund anyway ${formatPrice(fullRefund.refundable)}`
+                  : `Refund ${formatPrice(money.refundable)}`}
             </Button>
             {waitForReturn ? (
               <p className="text-xs text-muted-foreground">
                 Wait until the return arrives, then mark it received before refunding.
               </p>
+            ) : saleOnly ? (
+              <p className="text-xs text-muted-foreground">
+                Sale items are final sale. Customer returns are blocked.
+              </p>
             ) : money.shippingKept > 0 ? (
               <p className="text-xs text-muted-foreground">
                 Shipping {formatPrice(money.shippingKept)} stays charged.
+                {hasSale ? " Sale items also stay charged." : ""}
               </p>
             ) : null}
           </div>

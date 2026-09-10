@@ -63,7 +63,7 @@ export const POLICIES: Policy[] = [
         heading: "General conditions",
         body: [
           "All returns or exchanges must be unworn, unwashed, and have original tags attached.",
-          "Accessories and sale items are FINAL SALE and cannot be returned or exchanged.",
+          "Accessories and sale items are FINAL SALE and cannot be returned or exchanged. Sale items are marked Final sale on the product page, in the cart, and at checkout.",
           "Items showing signs of wear, alteration, or damage will not be accepted.",
         ],
       },

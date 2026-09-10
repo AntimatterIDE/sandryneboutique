@@ -99,6 +99,11 @@ export function CartDrawer() {
                           <p className="mt-1 text-xs text-muted-foreground">
                             {[item.size, item.color].filter(Boolean).join(" · ")}
                           </p>
+                          {item.finalSale ? (
+                            <p className="mt-1 text-[11px] tracking-[0.12em] uppercase text-destructive">
+                              Final sale — no returns
+                            </p>
+                          ) : null}
                         </div>
                         <button
                           type="button"

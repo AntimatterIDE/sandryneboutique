@@ -8,7 +8,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { requestOrderReturn } from "@/app/(store)/account/actions";
 import type { Order } from "@/lib/types";
-import { formatPrice, isOrderReturned, orderMoneyBreakdown, orderRefundBreakdown } from "@/lib/types";
+import {
+  formatPrice,
+  isFinalSaleItem,
+  isOrderReturned,
+  orderIsFinalSaleOnly,
+  orderMoneyBreakdown,
+  orderRefundBreakdown,
+} from "@/lib/types";
 
 function statusLabel(order: Order): string {
   if (isOrderReturned(order)) return "Refunded";
@@ -26,9 +33,11 @@ export function AccountOrderCard({ order }: { order: Order }) {
   const [pending, startTransition] = useTransition();
   const money = orderMoneyBreakdown(order);
   const refund = orderRefundBreakdown(order);
+  const finalSaleOnly = orderIsFinalSaleOnly(order);
   const canRequestReturn =
     !isOrderReturned(order) &&
     !order.return_requested_at &&
+    !finalSaleOnly &&
     (order.status === "paid" || order.status === "shipped");
   const trackingUrl = order.tracking_number
     ? `https://www.ups.com/track?tracknum=${encodeURIComponent(order.tracking_number)}`
@@ -68,6 +77,11 @@ export function AccountOrderCard({ order }: { order: Order }) {
                   ({[item.size, item.color].filter(Boolean).join(" · ")})
                 </span>
               )}
+              {isFinalSaleItem(item) ? (
+                <span className="block text-[11px] tracking-[0.12em] uppercase text-destructive">
+                  Final sale
+                </span>
+              ) : null}
             </span>
             <span className="tabular-nums shrink-0">{formatPrice(item.price * item.quantity)}</span>
           </li>
@@ -122,6 +136,10 @@ export function AccountOrderCard({ order }: { order: Order }) {
             ? " — we received your package and will refund your card (shipping not included)."
             : " — ship the item back with your order reference. You pay return postage. We refund merchandise and tax after it arrives."}
         </p>
+      ) : finalSaleOnly && !isOrderReturned(order) ? (
+        <p className="text-xs text-muted-foreground">
+          This order is final sale and cannot be returned.
+        </p>
       ) : canRequestReturn ? (
         <Button
           type="button"
@@ -130,7 +148,7 @@ export function AccountOrderCard({ order }: { order: Order }) {
           onClick={() => {
             if (
               !confirm(
-                `Request a return? You pay return shipping. Original shipping${refund.shippingKept > 0 ? ` (${formatPrice(refund.shippingKept)})` : ""} is not refunded. We refund ${formatPrice(refund.refundable)} after the item arrives.`
+                `Request a return? You pay return shipping. Original shipping${refund.shippingKept > 0 ? ` (${formatPrice(refund.shippingKept)})` : ""} is not refunded. Sale items are final sale. We refund ${formatPrice(refund.refundable)} after returnable items arrive.`
               )
             ) {
               return;

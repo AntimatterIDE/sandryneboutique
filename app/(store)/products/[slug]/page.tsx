@@ -161,6 +161,11 @@ export default async function ProductPage({ params }: PageProps) {
                 </span>
               )}
             </div>
+            {product.on_sale ? (
+              <p className="mt-2 text-xs tracking-[0.14em] uppercase text-muted-foreground">
+                Final sale — no returns
+              </p>
+            ) : null}
           </div>
 
           <p className="text-sm text-muted-foreground leading-relaxed">

@@ -9,6 +9,7 @@ import {
   formatPrice,
   isOrderInventoryRestocked,
   isOrderReturned,
+  orderHasFinalSale,
   orderRefundBreakdown,
   type OrderStatus,
 } from "@/lib/types";
@@ -869,7 +870,10 @@ export async function updateOrderStatus(
   return { ok: true, message: "Order updated." };
 }
 
-export async function refundOrder(orderId: string): Promise<ActionResult> {
+export async function refundOrder(
+  orderId: string,
+  options?: { includeFinalSale?: boolean }
+): Promise<ActionResult> {
   const denied = await requireAdmin();
   if (denied) return denied;
 
@@ -884,13 +888,16 @@ export async function refundOrder(orderId: string): Promise<ActionResult> {
   }
 
   const { returnCardFunds } = await import("@/lib/heartland");
-  const money = orderRefundBreakdown(order);
+  const money = orderRefundBreakdown(order, {
+    includeFinalSale: Boolean(options?.includeFinalSale),
+  });
   const remaining = money.refundable;
   if (remaining <= 0) {
     return {
       ok: false,
-      message:
-        money.shippingKept > 0
+      message: orderHasFinalSale(order)
+        ? "Sale items are final sale. Shipping also stays charged."
+        : money.shippingKept > 0
           ? "Merchandise is already refunded. Shipping stays charged."
           : "This order was already refunded.",
     };

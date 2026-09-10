@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getSessionInfo } from "@/lib/auth";
 import { createPrivilegedClient } from "@/lib/supabase/server";
-import { isOrderReturned, type Order } from "@/lib/types";
+import { isOrderReturned, orderIsFinalSaleOnly, type Order } from "@/lib/types";
 
 export async function requestOrderReturn(
   orderId: string
@@ -33,6 +33,9 @@ export async function requestOrderReturn(
   }
   if (order.status !== "paid" && order.status !== "shipped") {
     return { ok: false, message: "This order is not eligible for a return yet." };
+  }
+  if (orderIsFinalSaleOnly(order as Order)) {
+    return { ok: false, message: "Sale items are final sale and cannot be returned." };
   }
 
   const requestedAt = new Date().toISOString();

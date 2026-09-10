@@ -121,6 +121,8 @@ export interface OrderItem {
   quantity: number;
   size: string | null;
   color: string | null;
+  /** True when the product was on sale at purchase. Those lines are final sale. */
+  final_sale?: boolean;
 }
 
 export interface ShippingAddress {
@@ -205,9 +207,32 @@ export function orderMoneyBreakdown(order: Pick<Order, "items" | "total_amount" 
   return { merchandise, shipping, tax, total };
 }
 
-/** Merchandise + tax can be refunded. Shipping the customer paid stays with the boutique. */
+export function isFinalSaleItem(item: Pick<OrderItem, "final_sale">): boolean {
+  return Boolean(item.final_sale);
+}
+
+export function orderHasFinalSale(order: Pick<Order, "items">): boolean {
+  return order.items.some(isFinalSaleItem);
+}
+
+export function orderIsFinalSaleOnly(order: Pick<Order, "items">): boolean {
+  return order.items.length > 0 && order.items.every(isFinalSaleItem);
+}
+
+export function orderReturnableMerchandise(order: Pick<Order, "items">): number {
+  return (
+    Math.round(
+      order.items
+        .filter((item) => !isFinalSaleItem(item))
+        .reduce((sum, item) => sum + Number(item.price) * Number(item.quantity), 0) * 100
+    ) / 100
+  );
+}
+
+/** Merchandise + tax can be refunded, except final-sale lines. Shipping stays charged. */
 export function orderRefundBreakdown(
-  order: Pick<Order, "items" | "total_amount" | "tax_amount" | "shipping_amount" | "refunded_amount">
+  order: Pick<Order, "items" | "total_amount" | "tax_amount" | "shipping_amount" | "refunded_amount">,
+  options?: { includeFinalSale?: boolean }
 ): {
   merchandise: number;
   shipping: number;
@@ -220,7 +245,14 @@ export function orderRefundBreakdown(
   const money = orderMoneyBreakdown(order);
   const alreadyRefunded = Math.round(Number(order.refunded_amount ?? 0) * 100) / 100;
   const shippingKept = money.shipping;
-  const refundableTotal = Math.max(0, Math.round((money.total - shippingKept) * 100) / 100);
+  const returnableMerch = options?.includeFinalSale
+    ? money.merchandise
+    : orderReturnableMerchandise(order);
+  const taxShare =
+    money.merchandise > 0
+      ? Math.round(((money.tax * returnableMerch) / money.merchandise) * 100) / 100
+      : 0;
+  const refundableTotal = Math.max(0, Math.round((returnableMerch + taxShare) * 100) / 100);
   const refundable = Math.max(0, Math.round((refundableTotal - alreadyRefunded) * 100) / 100);
   return { ...money, refundable, shippingKept, alreadyRefunded };
 }

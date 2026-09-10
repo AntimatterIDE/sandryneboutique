@@ -75,6 +75,11 @@ export function ProductCard({ product, priority = false, className }: ProductCar
               </span>
             )}
           </div>
+          {product.on_sale ? (
+            <p className="text-[10px] tracking-[0.14em] uppercase text-muted-foreground">
+              Final sale
+            </p>
+          ) : null}
         </div>
       </Link>
     </article>

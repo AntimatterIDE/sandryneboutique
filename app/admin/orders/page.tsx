@@ -159,6 +159,11 @@ export default async function AdminOrdersPage({
                                 Item # {itemNo}
                               </span>
                             ) : null}
+                            {item.final_sale ? (
+                              <span className="block text-[11px] tracking-[0.12em] uppercase text-destructive">
+                                Final sale
+                              </span>
+                            ) : null}
                           </span>
                           <span className="tabular-nums shrink-0">
                             {formatPrice(item.price * item.quantity)}

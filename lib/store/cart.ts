@@ -16,6 +16,8 @@ export interface CartItem {
   heartlandPublicId?: string | null;
   quantity: number;
   maxQuantity: number;
+  /** Sale-priced items are final sale. */
+  finalSale?: boolean;
 }
 
 export function cartLineKey(
@@ -52,7 +54,11 @@ export const useCart = create<CartState>()(
               isOpen: true,
               items: state.items.map((i) =>
                 cartLineKey(i) === key
-                  ? { ...i, quantity: Math.min(i.quantity + quantity, i.maxQuantity) }
+                  ? {
+                      ...i,
+                      quantity: Math.min(i.quantity + quantity, i.maxQuantity),
+                      finalSale: Boolean(i.finalSale || item.finalSale),
+                    }
                   : i
               ),
             };
@@ -82,8 +88,16 @@ export const useCart = create<CartState>()(
     {
       name: "sandryne-cart-v2",
       partialize: (state) => ({ items: state.items }),
-      version: 2,
-      migrate: () => ({ items: [] }),
+      version: 3,
+      migrate: (persisted) => {
+        const state = persisted as { items?: CartItem[] } | undefined;
+        return {
+          items: (state?.items ?? []).map((item) => ({
+            ...item,
+            finalSale: Boolean(item.finalSale),
+          })),
+        };
+      },
     }
   )
 );

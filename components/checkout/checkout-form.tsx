@@ -646,6 +646,11 @@ export function CheckoutForm({
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {[item.size, item.color].filter(Boolean).join(" · ")}
                     </p>
+                    {item.finalSale ? (
+                      <p className="mt-1 text-[11px] tracking-[0.12em] uppercase text-destructive">
+                        Final sale — no returns
+                      </p>
+                    ) : null}
                   </div>
                   <span className="text-sm tabular-nums">
                     {formatPrice(item.price * item.quantity)}
@@ -756,7 +761,17 @@ export function CheckoutForm({
               </div>
             </dl>
 
-            <p className="mt-6 text-[11px] text-muted-foreground leading-relaxed">
+            {items.some((item) => item.finalSale) ? (
+              <p className="mt-6 text-[11px] text-destructive leading-relaxed">
+                Sale items are final sale and cannot be returned or exchanged. See our{" "}
+                <Link href="/policies/returns" className="underline underline-offset-2">
+                  return policy
+                </Link>
+                .
+              </p>
+            ) : null}
+
+            <p className={`${items.some((item) => item.finalSale) ? "mt-3" : "mt-6"} text-[11px] text-muted-foreground leading-relaxed`}>
               Georgia shipping addresses include sales tax. Other states do not. Shipping is
               quoted from your address. Orders over {formatPrice(FREE_SHIPPING_THRESHOLD)} include
               free Ground. By placing your order you agree to our{" "}

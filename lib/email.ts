@@ -52,6 +52,10 @@ function itemRows(order: Order): string {
         <td style="padding:8px 0;border-bottom:1px solid #eee;">
           ${escapeHtml(String(item.quantity))} × ${escapeHtml(item.name)}${
             opts ? ` <span style="color:#666;">(${escapeHtml(opts)})</span>` : ""
+          }${
+            item.final_sale
+              ? ` <span style="color:#8a1f1f;font-size:12px;">Final sale — no returns</span>`
+              : ""
           }
         </td>
         <td style="padding:8px 0;border-bottom:1px solid #eee;text-align:right;">${formatPrice(item.price * item.quantity)}</td>

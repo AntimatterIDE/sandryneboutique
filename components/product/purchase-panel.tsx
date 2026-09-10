@@ -129,6 +129,7 @@ export function PurchasePanel({ product }: PurchasePanelProps) {
           color: selectedVariant.color,
           heartlandPublicId: selectedVariant.heartland_public_id,
           maxQuantity: selectedVariant.inventory_count,
+          finalSale: Boolean(product.on_sale),
         },
         quantity
       );
@@ -152,6 +153,7 @@ export function PurchasePanel({ product }: PurchasePanelProps) {
         color,
         heartlandPublicId: product.heartland_public_id,
         maxQuantity: product.inventory_count,
+        finalSale: Boolean(product.on_sale),
       },
       quantity
     );
@@ -271,6 +273,12 @@ export function PurchasePanel({ product }: PurchasePanelProps) {
           {soldOut ? "Sold Out" : "Add to Cart"}
         </Button>
       </div>
+
+      {product.on_sale ? (
+        <p className="text-xs text-muted-foreground -mt-2">
+          Sale item — final sale, no returns or exchanges.
+        </p>
+      ) : null}
 
       {!soldOut && inventory > 0 && inventory <= 5 && !selectedVariant && (
         <p className="text-xs text-destructive -mt-3">Only {inventory} left in stock</p>
