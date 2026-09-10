@@ -66,6 +66,6 @@ export async function requestOrderReturn(
   return {
     ok: true,
     message:
-      "Return requested. Ship the item back (you pay return postage). We refund merchandise and tax after it arrives — original shipping is not refunded.",
+      "Return requested. Ship the item back (you pay postage). We refund the item price only after it arrives. Checkout shipping is not refunded.",
   };
 }

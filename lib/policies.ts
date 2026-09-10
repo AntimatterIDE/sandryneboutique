@@ -87,7 +87,7 @@ export const POLICIES: Policy[] = [
       {
         heading: "Refunds",
         body: [
-          "Refunds are issued to the original form of payment, minus the original shipping cost.",
+          "We refund the item price only, to the original form of payment. Shipping paid at checkout is not refunded. You also pay to ship the item back.",
           "Returns received after the 10-day period will not be accepted.",
         ],
       },

@@ -896,10 +896,8 @@ export async function refundOrder(
     return {
       ok: false,
       message: orderHasFinalSale(order)
-        ? "Sale items are final sale. Shipping also stays charged."
-        : money.shippingKept > 0
-          ? "Merchandise is already refunded. Shipping stays charged."
-          : "This order was already refunded.",
+        ? "Sale items are final sale and cannot be refunded."
+        : "The item price is already refunded. Checkout shipping is not refunded.",
     };
   }
   const result = await returnCardFunds(order.heartland_transaction_id, remaining, {
@@ -953,16 +951,14 @@ export async function refundOrder(
   if (!restock.ok) {
     return {
       ok: true,
-      message: `Card refunded${money.shippingKept > 0 ? ` (shipping ${formatPrice(money.shippingKept)} kept)` : ""}, but Heartland stock was not put back: ${restock.detail}`,
+      message: `Refunded the item price (${formatPrice(remaining)}). Checkout shipping is not refunded. Heartland stock was not put back: ${restock.detail}`,
     };
   }
-  const shippingNote =
-    money.shippingKept > 0 ? ` Shipping ${formatPrice(money.shippingKept)} was kept.` : "";
   return {
     ok: true,
     message: result.message?.toLowerCase().includes("already")
-      ? `Heartland already had a return on this card. The order is now marked refunded and inventory was restocked.${shippingNote}`
-      : `Card refunded ${formatPrice(remaining)}. Inventory was restocked.${shippingNote}`,
+      ? `Heartland already had a return on this card. The order is now marked refunded and inventory was restocked. Only the item price is refunded.`
+      : `Refunded the item price (${formatPrice(remaining)}). Checkout shipping is not refunded. Inventory was restocked.`,
   };
 }
 
@@ -1070,29 +1066,37 @@ export async function markReturnReceived(orderId: string): Promise<ActionResult>
   }
 
   const receivedAt = new Date().toISOString();
-  const money = orderRefundBreakdown(order);
-  const restock = await restockOrderInHeartlandAndSite(supabase, order, {
-    refundAmount: money.refundable,
-    allowOnHandIncrease: !isOrderInventoryRestocked(order),
-  });
-
   const { error: updateError } = await supabase
     .from("orders")
     .update({
       return_requested_at: order.return_requested_at ?? receivedAt,
       return_received_at: receivedAt,
+    })
+    .eq("id", orderId);
+  if (updateError) {
+    console.error("Mark return received failed:", updateError);
+    const needsMigration = /return_received|return_requested/i.test(updateError.message ?? "");
+    return {
+      ok: false,
+      message: needsMigration
+        ? "Could not mark received. Run supabase/migrations/015_order_returns.sql in the Supabase SQL Editor, then try again."
+        : `Could not mark received: ${updateError.message}`,
+    };
+  }
+
+  const money = orderRefundBreakdown(order);
+  const restock = await restockOrderInHeartlandAndSite(supabase, order, {
+    refundAmount: money.refundable,
+    allowOnHandIncrease: !isOrderInventoryRestocked(order),
+  });
+  await supabase
+    .from("orders")
+    .update({
       heartland_sync_status: restock.ok ? "synced" : "failed",
       heartland_sync_error: restock.ok ? null : restock.detail.slice(0, 1000),
       inventory_restocked_at: restock.ok ? receivedAt : undefined,
     })
     .eq("id", orderId);
-  if (updateError) {
-    return {
-      ok: false,
-      message:
-        "Could not mark received. Run supabase/migrations/015_order_returns.sql in Supabase.",
-    };
-  }
 
   if (restock.ok) {
     await markInventoryRestocked(supabase, orderId);
@@ -1107,13 +1111,13 @@ export async function markReturnReceived(orderId: string): Promise<ActionResult>
   if (!restock.ok) {
     return {
       ok: true,
-      message: `Return received, but Heartland was not updated: ${restock.detail} Refund the card next, then check the sales order payments and inventory.`,
+      message: `Return received, but Heartland was not updated: ${restock.detail} Next, refund the item price only (not shipping).`,
     };
   }
   return {
     ok: true,
     message:
-      "Return received. Heartland now has the refund tender and the item is back in available inventory. Refund the card next.",
+      "Return received. Heartland has the return tender and the item is back in available inventory. Next, refund the item price only — checkout shipping is not refunded.",
   };
 }
 

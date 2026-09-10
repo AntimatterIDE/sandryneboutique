@@ -176,7 +176,7 @@ export default async function AdminOrdersPage({
                           Shipping
                           {order.shipping_service ? ` · ${order.shipping_service}` : ""}
                           {isOrderReturned(order) && money.shipping > 0
-                            ? " (kept on refund)"
+                            ? " (not refunded)"
                             : " (paid at checkout)"}
                         </span>
                         <span className="tabular-nums">

@@ -457,7 +457,7 @@ export async function returnCardFunds(
   return {
     ok: false,
     message: preserveRemainder
-      ? "This sale may still be settling. Wait until it batches (usually overnight), then refund merchandise only so shipping stays charged."
+      ? "This sale may still be settling. Wait until it batches (usually overnight), then refund the item price only."
       : last?.message || "We couldn't return this charge. Please try again.",
     responseCode: last?.responseCode,
   };

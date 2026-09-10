@@ -127,14 +127,14 @@ export function AccountOrderCard({ order }: { order: Order }) {
       {isOrderReturned(order) ? (
         <p className="text-xs text-muted-foreground">
           Refunded {order.refunded_amount != null ? formatPrice(Number(order.refunded_amount)) : ""}
-          {refund.shippingKept > 0 ? `. Shipping ${formatPrice(refund.shippingKept)} was kept.` : "."}
+          {refund.shippingKept > 0 ? ". Checkout shipping was not refunded." : "."}
         </p>
       ) : order.return_requested_at ? (
         <p className="text-xs text-muted-foreground">
           Return requested
           {order.return_received_at
             ? " — we received your package and will refund your card (shipping not included)."
-            : " — ship the item back with your order reference. You pay return postage. We refund merchandise and tax after it arrives."}
+            : " — ship the item back with your order reference. You pay postage. We refund the item price only after it arrives."}
         </p>
       ) : finalSaleOnly && !isOrderReturned(order) ? (
         <p className="text-xs text-muted-foreground">
@@ -148,7 +148,7 @@ export function AccountOrderCard({ order }: { order: Order }) {
           onClick={() => {
             if (
               !confirm(
-                `Request a return? You pay return shipping. Original shipping${refund.shippingKept > 0 ? ` (${formatPrice(refund.shippingKept)})` : ""} is not refunded. Sale items are final sale. We refund ${formatPrice(refund.refundable)} after returnable items arrive.`
+                `Request a return? You pay to ship the item back. We refund the item price only (${formatPrice(refund.refundable)}). Checkout shipping is not refunded. Sale items are final sale.`
               )
             ) {
               return;

@@ -773,8 +773,9 @@ export function CheckoutForm({
 
             <p className={`${items.some((item) => item.finalSale) ? "mt-3" : "mt-6"} text-[11px] text-muted-foreground leading-relaxed`}>
               Georgia shipping addresses include sales tax. Other states do not. Shipping is
-              quoted from your address. Orders over {formatPrice(FREE_SHIPPING_THRESHOLD)} include
-              free Ground. By placing your order you agree to our{" "}
+              quoted from your address and is not refunded if you return an item. Orders over{" "}
+              {formatPrice(FREE_SHIPPING_THRESHOLD)} include free Ground. By placing your order
+              you agree to our{" "}
               <Link href="/policies/terms" className="underline underline-offset-2">
                 terms of service
               </Link>

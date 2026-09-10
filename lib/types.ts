@@ -229,7 +229,7 @@ export function orderReturnableMerchandise(order: Pick<Order, "items">): number 
   );
 }
 
-/** Merchandise + tax can be refunded, except final-sale lines. Shipping stays charged. */
+/** Refund is the item price only. Checkout shipping is never refunded. */
 export function orderRefundBreakdown(
   order: Pick<Order, "items" | "total_amount" | "tax_amount" | "shipping_amount" | "refunded_amount">,
   options?: { includeFinalSale?: boolean }
@@ -248,12 +248,7 @@ export function orderRefundBreakdown(
   const returnableMerch = options?.includeFinalSale
     ? money.merchandise
     : orderReturnableMerchandise(order);
-  const taxShare =
-    money.merchandise > 0
-      ? Math.round(((money.tax * returnableMerch) / money.merchandise) * 100) / 100
-      : 0;
-  const refundableTotal = Math.max(0, Math.round((returnableMerch + taxShare) * 100) / 100);
-  const refundable = Math.max(0, Math.round((refundableTotal - alreadyRefunded) * 100) / 100);
+  const refundable = Math.max(0, Math.round((returnableMerch - alreadyRefunded) * 100) / 100);
   return { ...money, refundable, shippingKept, alreadyRefunded };
 }
 

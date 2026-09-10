@@ -136,7 +136,7 @@ export async function sendOrderConfirmation(order: Order): Promise<void> {
       <p style="margin-top:20px;font-size:13px;">A receipt is included above. Track this order anytime in <a href="${accountUrl}">your account</a>.</p>
       ${
         money.shipping > 0
-          ? `<p style="font-size:12px;color:#666;">Original shipping (${formatPrice(money.shipping)}) is not refunded if you return the order. Return shipping is also paid by you.</p>`
+          ? `<p style="font-size:12px;color:#666;">If you return an item, we refund the item price only. Shipping you paid at checkout is not refunded, and you pay to ship the item back.</p>`
           : ""
       }
     `
@@ -171,8 +171,8 @@ export async function sendReturnRequestedEmails(order: Order): Promise<void> {
       <p>We received your return request for order ${escapeHtml(order.id.slice(0, 8))}.</p>
       <p>Please ship the unworn item(s) with tags attached via UPS or FedEx (not USPS) to:</p>
       <p>${address}</p>
-      <p>Write your order reference on the label. <strong>You pay return shipping</strong>. Original shipping${money.shippingKept > 0 ? ` (${formatPrice(money.shippingKept)})` : ""} is not refunded.</p>
-      <p>Once we receive the package, we will refund ${formatPrice(money.refundable)} to your original card.</p>
+      <p>Write your order reference on the label. You pay to ship the item back.</p>
+      <p>Once we receive the package, we refund the item price only (${formatPrice(money.refundable)}). Shipping you paid at checkout is not refunded.</p>
     `
   );
   await send(order.email, `Return requested · ${SITE_NAME}`, customerHtml);
@@ -183,7 +183,7 @@ export async function sendReturnRequestedEmails(order: Order): Promise<void> {
       "Customer return request",
       `<p>${escapeHtml(order.shipping_address.full_name)} (${escapeHtml(order.email)}) requested a return.</p>
        <p>Order ${escapeHtml(order.id)}</p>
-       <p>Refund due after the item arrives: ${formatPrice(money.refundable)}. Keep shipping ${formatPrice(money.shippingKept)}.</p>
+       <p>Refund the item price only: ${formatPrice(money.refundable)}. Checkout shipping is not refunded.</p>
        <p><a href="${siteUrl()}/admin/orders">Open admin orders</a></p>`
     )
   );
@@ -195,10 +195,10 @@ export async function sendRefundIssued(order: Order): Promise<void> {
   const html = layout(
     "Your refund is on the way",
     `
-      <p>We received your return and issued a refund of ${formatPrice(amount)} to the original card.</p>
+      <p>We received your return and refunded the item price (${formatPrice(amount)}) to the original card.</p>
       ${
         money.shippingKept > 0
-          ? `<p>Original shipping of ${formatPrice(money.shippingKept)} was not refunded, as noted at checkout.</p>`
+          ? `<p>Shipping you paid at checkout is not refunded.</p>`
           : ""
       }
       <p style="font-size:13px;color:#666;">Reference ${escapeHtml(order.id)}</p>

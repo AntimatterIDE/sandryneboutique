@@ -100,7 +100,7 @@ export function OrderTools({
                 ? ` on ${new Date(order.refunded_at).toLocaleDateString()}`
                 : " This card has already been refunded."}
               {money.shippingKept > 0
-                ? ` Shipping ${formatPrice(money.shippingKept)} was kept.`
+                ? ` Item price only — checkout shipping was not refunded.`
                 : ""}
             </p>
           </div>
@@ -112,7 +112,7 @@ export function OrderTools({
                 {order.return_requested_at
                   ? ` on ${new Date(order.return_requested_at).toLocaleDateString()}`
                   : ""}
-                . They pay return shipping. Original shipping is not refunded.
+                . They pay to ship it back. Refund the item price only.
               </p>
             ) : null}
             {returnRequested && !returnReceived ? (
@@ -122,7 +122,7 @@ export function OrderTools({
                 onClick={() => {
                   if (
                     !confirm(
-                      "Mark this return received? Heartland will record a refund tender on the sales order and put the item back in available inventory. Refund the card after that."
+                      "Mark this return received? Heartland will record the return on the sales order and put the item back in available inventory. Then refund the item price only — not shipping."
                     )
                   ) {
                     return;
@@ -150,10 +150,6 @@ export function OrderTools({
               onClick={() => {
                 const amount = money.refundable > 0 ? money.refundable : fullRefund.refundable;
                 const overrideSale = money.refundable <= 0 && saleOnly;
-                const keep =
-                  money.shippingKept > 0
-                    ? ` The customer still pays ${formatPrice(money.shippingKept)} shipping.`
-                    : "";
                 const saleNote = hasSale
                   ? overrideSale
                     ? " This order is final sale. Refund anyway?"
@@ -161,7 +157,7 @@ export function OrderTools({
                   : "";
                 if (
                   !confirm(
-                    `Refund ${formatPrice(amount)} for merchandise and tax?${keep}${saleNote} Heartland inventory will update automatically.`
+                    `Refund ${formatPrice(amount)} — the item price only? Checkout shipping is not refunded. The customer pays to ship the item back.${saleNote}`
                   )
                 ) {
                   return;
@@ -186,8 +182,8 @@ export function OrderTools({
               </p>
             ) : money.shippingKept > 0 ? (
               <p className="text-xs text-muted-foreground">
-                Shipping {formatPrice(money.shippingKept)} stays charged.
-                {hasSale ? " Sale items also stay charged." : ""}
+                Refund the item price only. Checkout shipping is not refunded.
+                {hasSale ? " Sale items stay charged." : ""}
               </p>
             ) : null}
           </div>
