@@ -1,7 +1,7 @@
 import "server-only";
 import { Resend } from "resend";
 import { publicSiteUrl } from "@/lib/site-url";
-import { SITE_EMAIL, SITE_NAME, STORE_CONTACT } from "@/lib/constants";
+import { SITE_EMAIL, SITE_NAME, STORE_CONTACT, STORE_NOTIFY_EMAIL } from "@/lib/constants";
 import type { Order } from "@/lib/types";
 import { formatPrice, orderMoneyBreakdown, orderRefundBreakdown } from "@/lib/types";
 
@@ -11,6 +11,16 @@ function siteUrl(): string {
 
 function fromAddress(): string {
   return process.env.EMAIL_FROM?.trim() || `${SITE_NAME} <${SITE_EMAIL}>`;
+}
+
+function notifyAddresses(to: string): string[] {
+  const extra = (process.env.EMAIL_BCC ?? "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  const recipients = new Set<string>([STORE_NOTIFY_EMAIL.toLowerCase(), ...extra]);
+  recipients.delete(to.trim().toLowerCase());
+  return [...recipients];
 }
 
 function resendClient(): Resend | null {
@@ -96,9 +106,11 @@ async function send(to: string, subject: string, html: string): Promise<void> {
     console.warn("RESEND_API_KEY is not set — skipping email:", subject);
     return;
   }
+  const bcc = notifyAddresses(to);
   const { error } = await resend.emails.send({
     from: fromAddress(),
     to,
+    ...(bcc.length ? { bcc } : {}),
     subject,
     html,
   });

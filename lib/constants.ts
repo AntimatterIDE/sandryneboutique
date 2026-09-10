@@ -6,6 +6,9 @@ export const SITE_NAME = "Sandryne Boutique";
 
 export const SITE_EMAIL = "info@sandryneboutique.com";
 
+/** Receives a copy of every customer email (orders, shipping, returns, welcome). */
+export const STORE_NOTIFY_EMAIL = "tania.manley@sandryneboutique.com";
+
 export const STORE_CONTACT = {
   email: SITE_EMAIL,
   phoneDisplay: "+1 470-820-2859",
