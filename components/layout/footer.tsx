@@ -7,6 +7,9 @@ import {
 } from "@/lib/constants";
 import { NewsletterFormLazy } from "@/components/layout/newsletter-form-lazy";
 import { InstagramIcon, TikTokIcon } from "@/components/icons/social";
+import { ProductTiltedTiles } from "@/components/home/product-tilted-tiles";
+import { LazySection } from "@/components/ui/lazy-section";
+import { getProducts } from "@/lib/data/products";
 
 const EXPLORE_LINKS = [
   { href: "/shop", label: "Shop" },
@@ -21,8 +24,27 @@ const RESOURCE_LINKS = [
   { href: "/contact", label: "Contact" },
 ];
 
-export function Footer() {
+export async function Footer() {
+  const tileProducts = await getProducts({
+    sort: "newest",
+    shoppableOnly: true,
+    limit: 48,
+  });
+  const productTiles = tileProducts
+    .filter((product) => product.images[0])
+    .map((product) => ({
+      src: product.images[0],
+      href: `/products/${product.slug}`,
+      alt: product.name,
+    }));
+
   return (
+    <>
+      {productTiles.length > 0 && (
+        <LazySection minHeight="880px" rootMargin="80px">
+          <ProductTiltedTiles tiles={productTiles} />
+        </LazySection>
+      )}
     <footer className="border-t border-foreground/8 bg-background">
       <div className="mx-auto max-w-7xl px-6 py-16">
         <div className="grid gap-12 lg:grid-cols-12">
@@ -128,5 +150,6 @@ export function Footer() {
         </div>
       </div>
     </footer>
+    </>
   );
 }

@@ -17,7 +17,9 @@ export default async function StoreLayout({
         <Header menu={menu} />
       </Suspense>
       <main className="flex-1">{children}</main>
-      <Footer />
+      <Suspense fallback={<div className="min-h-[200px] bg-background" aria-hidden />}>
+        <Footer />
+      </Suspense>
       <CartDrawerLazy />
     </>
   );
