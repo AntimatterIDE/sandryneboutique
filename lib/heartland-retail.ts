@@ -1156,6 +1156,43 @@ export async function addRefundTenderToSalesOrder(
 
   const paymentTypeId = options?.paymentTypeId ?? Number(process.env.HEARTLAND_RETAIL_WEB_PAYMENT_TYPE);
   const refund = -amount;
+
+  if (Number.isFinite(paymentTypeId) && paymentTypeId > 0) {
+    try {
+      return await addOrderPayment(orderId, {
+        amount: refund,
+        payment_type_id: paymentTypeId,
+        reference: options?.reference,
+      });
+    } catch (err) {
+      console.warn("Heartland Retail refund via website payment type failed:", err);
+    }
+  }
+
+  const invoices = await listInvoicesForOrder(orderId);
+  const invoicePayloads: Record<string, unknown>[] = [
+    {
+      type: "CustomPayment",
+      deposit: true,
+      amount: refund,
+      ...(Number.isFinite(paymentTypeId) && paymentTypeId > 0 ? { payment_type_id: paymentTypeId } : {}),
+    },
+    { type: "CashPayment", deposit: true, amount: refund },
+  ];
+  for (const invoiceId of invoices) {
+    for (const payload of invoicePayloads) {
+      try {
+        const { res } = await retailFetch(`/sales/invoices/${invoiceId}/payments`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        return parseLocationId(res.headers.get("location"));
+      } catch {
+        // Try the next invoice tender shape.
+      }
+    }
+  }
+
   const attempts: Record<string, unknown>[] = [
     {
       type: "CustomPayment",
@@ -1313,16 +1350,22 @@ export async function createRetailReturn(input: {
     console.warn("Heartland Retail return ticket balance skipped:", err);
   }
 
+  let paymentPosted = input.refundAmount == null || input.refundAmount === 0;
+  let lastPaymentError: unknown;
   for (const payload of paymentAttempts) {
     try {
       await retailFetch(`/sales/tickets/${ticketId}/payments`, {
         method: "POST",
         body: JSON.stringify(payload),
       });
+      paymentPosted = true;
       break;
-    } catch {
-      // Try the next tender shape.
+    } catch (err) {
+      lastPaymentError = err;
     }
+  }
+  if (!paymentPosted) {
+    console.error("Heartland Retail return ticket payment failed:", lastPaymentError);
   }
 
   await retailFetch(`/sales/tickets/${ticketId}`, {
@@ -1482,6 +1525,12 @@ export async function restockRetailInventory(input: {
         }
       }
     }
+  }
+
+  if (refundAmount > 0 && refundPaymentId == null && returnTicketId == null) {
+    console.error(
+      "Heartland Retail did not record a refund tender. Portico may have credited the card without a Retail payment line."
+    );
   }
 
   return { returnTicketId, voidedOrderIds: [], adjustmentSetId, refundPaymentId };

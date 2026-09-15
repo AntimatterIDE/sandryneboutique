@@ -273,12 +273,15 @@ export async function refundTransaction(
 ): Promise<ChargeResult> {
   ensureConfigured();
 
+  const invoiceNumber = newInvoiceNumber("RF");
   try {
     const response = await porticoTransaction(transactionId)
       .refund(moneyString(amount, Number(amount)))
       .withCurrency("USD")
+      .withInvoiceNumber(invoiceNumber)
+      .withEcommerceInfo(ecommerceInfoForToday())
       .execute();
-    return gatewayResult(response);
+    return gatewayResult(response, invoiceNumber);
   } catch (err) {
     return gatewayError(err, "We couldn't refund this transaction. Please try again.");
   }
@@ -378,10 +381,15 @@ async function lookupPorticoTransaction(transactionId: string): Promise<PorticoT
   }
 }
 
+function notSettledForReturn(result: ChargeResult): boolean {
+  return isZeroSettlementReturnError(result);
+}
+
 /**
- * Same-day pending sales must be voided or reversed. Refund (CreditReturn)
- * only works after Heartland settles the batch — otherwise Portico returns 6.
- * If a prior attempt already released the hold, treat that as success.
+ * Customer refunds must be CreditReturn tied to GatewayTxnId so Heartland
+ * merchant batches show a return. Void/reverse credits the card by shrinking
+ * the original sale and never posts a refund on the merchant account.
+ * CreditReturn only works after the sale batches — otherwise Portico returns 6.
  */
 export async function returnCardFunds(
   transactionId: string,
@@ -405,10 +413,6 @@ export async function returnCardFunds(
     return alreadyReturnedResult(transactionId);
   }
 
-  // Full reverse/void would also return shipping. Keep a partial amount authorized.
-  const reverseAmount = preserveRemainder
-    ? moneyString(dollars, dollars)
-    : moneyString(snapshot?.authorizedAmount, dollars);
   const refundAmount = settlementKnown
     ? moneyString(Math.min(dollars, settlement), dollars)
     : moneyString(dollars, dollars);
@@ -417,30 +421,42 @@ export async function returnCardFunds(
 
   const attempts: ChargeResult[] = [];
 
-  if (!settled) {
-    if (!preserveRemainder) {
-      const voided = await voidTransaction(transactionId);
-      attempts.push(voided);
-      if (voided.ok) return voided;
-      if (isExistingReturnError(voided)) return alreadyReturnedResult(transactionId);
+  if (Number(refundAmount) > 0) {
+    const refunded = await refundTransaction(transactionId, refundAmount);
+    attempts.push(refunded);
+    if (refunded.ok) return refunded;
+    if (isExistingReturnError(refunded)) return alreadyReturnedResult(transactionId);
+    if (notSettledForReturn(refunded) && preserveRemainder) {
+      return {
+        ok: false,
+        message:
+          "This sale may still be settling. Wait until it batches (usually overnight), then refund the item price only. That posts a CreditReturn on the Heartland merchant account.",
+        responseCode: refunded.responseCode,
+      };
     }
+    if (isZeroSettlementReturnError(refunded) && settled) {
+      return alreadyReturnedResult(transactionId);
+    }
+  }
 
-    const reversed = await reverseTransaction(transactionId, reverseAmount);
+  // Full same-day cancel only: void/reverse before batch. Do not use this for
+  // item returns that keep shipping — those must be CreditReturn after batch.
+  if (!preserveRemainder && !settled) {
+    const voided = await voidTransaction(transactionId);
+    attempts.push(voided);
+    if (voided.ok) return voided;
+    if (isExistingReturnError(voided)) return alreadyReturnedResult(transactionId);
+
+    const reversed = await reverseTransaction(
+      transactionId,
+      moneyString(snapshot?.authorizedAmount, dollars)
+    );
     attempts.push(reversed);
     if (reversed.ok) return reversed;
     if (isExistingReturnError(reversed)) return alreadyReturnedResult(transactionId);
 
     const again = await lookupPorticoTransaction(transactionId);
     if (again && (isAlreadyReleased(again.status) || Number(again.settlementAmount) <= 0)) {
-      return alreadyReturnedResult(transactionId);
-    }
-  }
-
-  if (Number(refundAmount) > 0) {
-    const refunded = await refundTransaction(transactionId, refundAmount);
-    attempts.push(refunded);
-    if (refunded.ok) return refunded;
-    if (isExistingReturnError(refunded) || isZeroSettlementReturnError(refunded)) {
       return alreadyReturnedResult(transactionId);
     }
   }
@@ -457,7 +473,7 @@ export async function returnCardFunds(
   return {
     ok: false,
     message: preserveRemainder
-      ? "This sale may still be settling. Wait until it batches (usually overnight), then refund the item price only."
+      ? "This sale may still be settling. Wait until it batches (usually overnight), then refund the item price only. That posts a CreditReturn on the Heartland merchant account."
       : last?.message || "We couldn't return this charge. Please try again.",
     responseCode: last?.responseCode,
   };
