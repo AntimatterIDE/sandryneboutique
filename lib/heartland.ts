@@ -109,6 +109,8 @@ export interface ChargeInput {
   country?: string;
   invoiceNumber?: string;
   allowDuplicates?: boolean;
+  cardHolderName?: string;
+  cardLastFour?: string;
 }
 
 export interface ChargeResult {
@@ -188,12 +190,18 @@ export async function chargeCard(input: ChargeInput): Promise<ChargeResult> {
 
   const card = new CreditCardData();
   card.token = input.token;
+  if (input.cardHolderName?.trim()) {
+    card.cardHolderName = input.cardHolderName.trim().slice(0, 26);
+  }
 
   const address = new Address();
   address.postalCode = sanitizePostalCode(input.postalCode, input.country);
   address.streetAddress1 = input.streetAddress.trim();
 
-  const invoiceNumber = input.invoiceNumber?.trim() || newInvoiceNumber();
+  const lastFour = input.cardLastFour?.replace(/\D/g, "").slice(-4);
+  const invoiceNumber =
+    input.invoiceNumber?.trim() ||
+    (lastFour && lastFour.length === 4 ? newInvoiceNumber(`W${lastFour}`) : newInvoiceNumber());
 
   try {
     const response = await card

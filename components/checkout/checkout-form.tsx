@@ -28,7 +28,20 @@ import {
 import { HCaptchaField } from "@/components/checkout/hcaptcha-field";
 
 interface TokenSuccessResponse {
-  paymentReference: string;
+  paymentReference?: string;
+  token?: string;
+  details?: {
+    cardLast4?: string;
+    cardNumber?: string;
+    cardType?: string;
+    cardholderName?: string;
+  };
+  card?: {
+    last4?: string;
+    cardLast4?: string;
+    brand?: string;
+    cardType?: string;
+  };
 }
 
 interface TokenErrorResponse {
@@ -50,6 +63,22 @@ declare global {
       };
     };
   }
+}
+
+function tokenPaymentReference(resp: TokenSuccessResponse): string {
+  return resp.paymentReference || resp.token || "";
+}
+
+function tokenCardLastFour(resp: TokenSuccessResponse): string | undefined {
+  const fromDetails = resp.details?.cardLast4 || resp.details?.cardNumber?.replace(/\D/g, "").slice(-4);
+  const fromCard = resp.card?.last4 || resp.card?.cardLast4;
+  const digits = (fromDetails || fromCard || "").replace(/\D/g, "").slice(-4);
+  return digits.length === 4 ? digits : undefined;
+}
+
+function tokenCardBrand(resp: TokenSuccessResponse): string | undefined {
+  const brand = resp.details?.cardType || resp.card?.brand || resp.card?.cardType;
+  return brand?.trim() || undefined;
 }
 
 const EMPTY_SHIPPING: ShippingAddress = {
@@ -219,7 +248,12 @@ export function CheckoutForm({
   };
 
   const submitOrder = useCallback(
-    async (token: string) => {
+    async (resp: TokenSuccessResponse) => {
+      const token = tokenPaymentReference(resp);
+      if (!token) {
+        toast.error("Missing payment token. Please re-enter your card details.");
+        return;
+      }
       const currentShipping = shippingRef.current;
       const currentItems = itemsRef.current;
 
@@ -279,6 +313,8 @@ export function CheckoutForm({
           shippingServiceCode: selectedShippingCodeRef.current,
           createAccount: !signedInEmail && createAccountRef.current,
           password: createAccountRef.current ? accountPasswordRef.current : undefined,
+          cardLastFour: tokenCardLastFour(resp),
+          cardBrand: tokenCardBrand(resp),
         });
 
         if (result.ok) {
@@ -307,7 +343,7 @@ export function CheckoutForm({
     });
 
     cardForm.on("token-success", (resp) => {
-      submitOrder(resp.paymentReference);
+      submitOrder(resp);
     });
 
     cardForm.on("token-error", (resp) => {

@@ -794,22 +794,51 @@ export async function addOrderPayment(
     payment_type_id: number;
     /** Portico transaction id for reconciliation */
     reference?: string;
+    cardLastFour?: string;
+    cardBrand?: string;
+    cardHolderName?: string;
   }
 ): Promise<number> {
   const amount = Math.round(input.amount * 100) / 100;
+  const lastFour = input.cardLastFour?.replace(/\D/g, "").slice(-4);
+  const cardMeta =
+    lastFour && lastFour.length === 4
+      ? {
+          last_four: lastFour,
+          card_last_four: lastFour,
+          ...(input.cardBrand ? { card_type: input.cardBrand } : {}),
+          ...(input.cardHolderName ? { cardholder_name: input.cardHolderName } : {}),
+        }
+      : {};
+  const custom = {
+    ...(input.reference ? { portico_transaction_id: input.reference } : {}),
+    ...(lastFour && lastFour.length === 4 ? { last_four: lastFour } : {}),
+    ...(input.cardBrand ? { card_brand: input.cardBrand } : {}),
+  };
+  const descriptionParts = [
+    "Website Portico",
+    input.cardBrand,
+    lastFour && lastFour.length === 4 ? `****${lastFour}` : null,
+    input.reference,
+  ].filter(Boolean);
+  const description = descriptionParts.join(" ");
   const attempts: Record<string, unknown>[] = [
     {
       type: "CustomPayment",
       deposit: true,
       amount,
       payment_type_id: input.payment_type_id,
-      ...(input.reference ? { custom: { portico_transaction_id: input.reference } } : {}),
+      ...(Object.keys(custom).length > 0 ? { custom } : {}),
+      ...(description ? { description } : {}),
+      ...cardMeta,
     },
     {
       type: "Payments::CustomPayment",
       deposit: true,
       amount,
       payment_type_id: input.payment_type_id,
+      ...(description ? { description } : {}),
+      ...cardMeta,
     },
     {
       deposit: true,
@@ -821,6 +850,8 @@ export async function addOrderPayment(
       deposit: true,
       amount,
       ...(input.reference ? { reference: input.reference } : {}),
+      ...(description ? { description } : {}),
+      ...cardMeta,
     },
     {
       type: "CashPayment",
@@ -1579,6 +1610,8 @@ export async function syncPaidOrderToRetail(input: {
   taxAmount?: number;
   totalAmount: number;
   porticoTransactionId?: string;
+  cardLastFour?: string;
+  cardBrand?: string;
   /** Resume an order that already has lines (payment previously 500'd). */
   existingSalesOrderId?: number;
   /** Persist the Retail id as soon as it exists so retries do not create duplicates. */
@@ -1704,6 +1737,9 @@ export async function syncPaidOrderToRetail(input: {
       amount: due > 0 ? due : input.totalAmount,
       payment_type_id: paymentTypeId,
       reference: input.porticoTransactionId,
+      cardLastFour: input.cardLastFour,
+      cardBrand: input.cardBrand,
+      cardHolderName: input.fullName,
     });
   } catch (err) {
     console.warn("Heartland Retail payment step skipped:", err);

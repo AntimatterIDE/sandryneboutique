@@ -232,6 +232,12 @@ export default async function AdminOrdersPage({
                       <p className="text-xs font-mono break-all">
                         {order.heartland_transaction_id ?? "—"}
                       </p>
+                      <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
+                        Website sales live on the Heartland eCommerce / Portico device, not the
+                        in-store register. Last-4 search on the POS only finds swiped store sales.
+                        In Merchant Center, search this Gateway Txn ID (or invoice starting with W
+                        plus the last 4).
+                      </p>
                     </div>
                     <div>
                       <h3 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground mb-2">

@@ -51,6 +51,8 @@ export interface CheckoutInput {
   shippingServiceCode?: string | null;
   createAccount?: boolean;
   password?: string;
+  cardLastFour?: string | null;
+  cardBrand?: string | null;
 }
 
 export type CheckoutResult =
@@ -378,12 +380,16 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
   const billingStreet = input.billing?.line1?.trim() || input.shipping.line1;
   const billingPostal = input.billing?.postal_code?.trim() || input.shipping.postal_code;
 
+  const cardLastFour = input.cardLastFour?.replace(/\D/g, "").slice(-4) || undefined;
+
   const charge = await chargeCard({
     token: input.token,
     amount: total,
     postalCode: billingPostal,
     streetAddress: billingStreet,
     country: input.shipping.country,
+    cardHolderName: input.billing?.full_name?.trim() || input.shipping.full_name,
+    cardLastFour,
   });
 
   if (!charge.ok) {
@@ -536,6 +542,8 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
         taxAmount: tax,
         totalAmount: total,
         porticoTransactionId: charge.transactionId,
+        cardLastFour,
+        cardBrand: input.cardBrand ?? undefined,
         persistSalesOrderId: async (id) => {
           await admin.from("orders").update({ heartland_sales_order_id: id }).eq("id", order.id);
         },
