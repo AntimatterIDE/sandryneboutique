@@ -129,6 +129,8 @@ export function CheckoutForm({
   const [createAccount, setCreateAccount] = useState(false);
   const [accountPassword, setAccountPassword] = useState("");
   const formMounted = useRef(false);
+  const processingRef = useRef(false);
+  const submitOrderRef = useRef<(resp: TokenSuccessResponse) => Promise<void>>(async () => {});
 
   // Refs so the token-success handler (bound once) always sees current values.
   const shippingRef = useRef(shipping);
@@ -280,6 +282,8 @@ export function CheckoutForm({
         }
       }
 
+      if (processingRef.current) return;
+      processingRef.current = true;
       setProcessing(true);
       try {
         const billing = billingRef.current;
@@ -322,16 +326,20 @@ export function CheckoutForm({
           router.push(`/checkout/confirmation?order=${result.orderId}`);
         } else {
           toast.error(result.error);
+          processingRef.current = false;
           setProcessing(false);
         }
       } catch (err) {
         console.error("Checkout failed:", err);
         toast.error("Something went wrong. Please try again.");
+        processingRef.current = false;
         setProcessing(false);
       }
     },
     [clearCart, router, signedInEmail]
   );
+
+  submitOrderRef.current = submitOrder;
 
   useEffect(() => {
     if (!scriptReady || !publicKey || formMounted.current || !window.GlobalPayments) return;
@@ -343,7 +351,7 @@ export function CheckoutForm({
     });
 
     cardForm.on("token-success", (resp) => {
-      submitOrder(resp);
+      void submitOrderRef.current(resp);
     });
 
     cardForm.on("token-error", (resp) => {
@@ -353,7 +361,7 @@ export function CheckoutForm({
         "Please check your card details and try again.";
       toast.error(message);
     });
-  }, [scriptReady, publicKey, submitOrder]);
+  }, [scriptReady, publicKey]);
 
   const update = (field: keyof ShippingAddress) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setShipping((s) => ({ ...s, [field]: e.target.value }));
@@ -636,7 +644,10 @@ export function CheckoutForm({
                   servers. Complete the card form below to place your order.
                 </p>
                 {/* Heartland hosted fields render into this container */}
-                <div id="heartland-card" className="min-h-28" />
+                <div
+                  id="heartland-card"
+                  className={`min-h-28 ${processing ? "pointer-events-none opacity-50" : ""}`}
+                />
                 {!scriptReady && (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="size-4 animate-spin" />

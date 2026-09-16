@@ -146,6 +146,35 @@ function validateShipping(s: ShippingAddress): string | null {
   return null;
 }
 
+function cartFingerprint(items: OrderItem[]): string {
+  return items
+    .map((item) => `${item.product_id}:${item.variant_id ?? ""}:${item.quantity}`)
+    .sort()
+    .join("|");
+}
+
+async function findRecentDuplicateOrder(
+  admin: ReturnType<typeof createAdminClient>,
+  email: string,
+  total: number,
+  items: OrderItem[]
+): Promise<string | null> {
+  const since = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+  const { data } = await admin
+    .from("orders")
+    .select("id, items, total_amount")
+    .ilike("email", email.trim())
+    .eq("total_amount", total)
+    .gte("created_at", since)
+    .in("status", ["paid", "shipped"]);
+  const wanted = cartFingerprint(items);
+  const match = (data ?? []).find((row) => {
+    const existing = (row.items ?? []) as OrderItem[];
+    return cartFingerprint(existing) === wanted;
+  });
+  return match?.id ?? null;
+}
+
 export async function processCheckout(input: CheckoutInput): Promise<CheckoutResult> {
   if (!heartlandConfigured()) {
     return { ok: false, error: "Payments are not configured yet. Add your Heartland keys to enable checkout." };
@@ -381,6 +410,16 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
   const billingPostal = input.billing?.postal_code?.trim() || input.shipping.postal_code;
 
   const cardLastFour = input.cardLastFour?.replace(/\D/g, "").slice(-4) || undefined;
+
+  const duplicate = await findRecentDuplicateOrder(
+    admin,
+    input.shipping.email,
+    total,
+    orderItems
+  );
+  if (duplicate) {
+    return { ok: true, orderId: duplicate };
+  }
 
   const charge = await chargeCard({
     token: input.token,
