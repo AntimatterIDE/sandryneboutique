@@ -74,6 +74,62 @@ function packageLine() {
   };
 }
 
+function moneyAmount(raw: unknown): number | null {
+  if (typeof raw === "number" && Number.isFinite(raw)) return Math.round(raw * 100) / 100;
+  if (typeof raw === "string") {
+    const amount = Number(raw);
+    return Number.isFinite(amount) ? Math.round(amount * 100) / 100 : null;
+  }
+  if (raw && typeof raw === "object" && "amount" in raw) {
+    return moneyAmount((raw as { amount?: unknown }).amount);
+  }
+  return null;
+}
+
+function fedexErrorMessage(body: unknown, fallback: string): string {
+  if (!body || typeof body !== "object") return fallback;
+  const record = body as {
+    errors?: { code?: string; message?: string }[];
+    error_description?: string;
+  };
+  const first = record.errors?.[0];
+  if (first?.message) return first.code ? `${first.code}: ${first.message}` : first.message;
+  return record.error_description || fallback;
+}
+
+async function readFedExBody(res: Response): Promise<unknown> {
+  const text = await res.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return { error_description: text.slice(0, 240) };
+  }
+}
+
+/** Next FedEx business day in the Cumming, GA timezone. Weekends are not valid ship dates. */
+function shipDate(): string {
+  let cursor = new Date();
+  for (let i = 0; i < 8; i++) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      weekday: "short",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(cursor);
+    const weekday = parts.find((part) => part.type === "weekday")?.value;
+    const year = parts.find((part) => part.type === "year")?.value;
+    const month = parts.find((part) => part.type === "month")?.value;
+    const day = parts.find((part) => part.type === "day")?.value;
+    if (weekday !== "Sat" && weekday !== "Sun" && year && month && day) {
+      return `${year}-${month}-${day}`;
+    }
+    cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000);
+  }
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
+}
+
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
 async function fedexAccessToken(): Promise<string> {
@@ -97,16 +153,12 @@ async function fedexAccessToken(): Promise<string> {
       client_secret: secret,
     }),
   });
-  const body = (await res.json()) as {
+  const body = (await readFedExBody(res)) as {
     access_token?: string;
     expires_in?: number;
-    errors?: { message?: string }[];
-    error_description?: string;
-  };
-  if (!res.ok || !body.access_token) {
-    throw new Error(
-      body.errors?.[0]?.message || body.error_description || "FedEx login failed. Check the API key, secret, and FEDEX_ENV."
-    );
+  } | null;
+  if (!res.ok || !body?.access_token) {
+    throw new Error(fedexErrorMessage(body, "FedEx login failed. Check the API key, secret, and FEDEX_ENV."));
   }
   cachedToken = {
     value: body.access_token,
@@ -148,15 +200,13 @@ export function fedexServiceName(code: string): string {
 
 function accountRateAmount(details: {
   rateType?: string;
-  totalNetCharge?: number | string;
-  totalNetFedExCharge?: number | string;
+  totalNetCharge?: unknown;
+  totalNetFedExCharge?: unknown;
 }[]): number | null {
   const preferred =
     details.find((row) => /account/i.test(row.rateType ?? "")) ?? details[0];
   if (!preferred) return null;
-  const raw = preferred.totalNetCharge ?? preferred.totalNetFedExCharge;
-  const amount = typeof raw === "number" ? raw : Number(raw);
-  return Number.isFinite(amount) ? Math.round(amount * 100) / 100 : null;
+  return moneyAmount(preferred.totalNetCharge ?? preferred.totalNetFedExCharge);
 }
 
 export async function quoteFedExRates(shipping: ShippingAddress): Promise<
@@ -171,6 +221,7 @@ export async function quoteFedExRates(shipping: ShippingAddress): Promise<
       requestedShipment: {
         shipper: { address: shipperAddress() },
         recipient: { address: fedexAddress(shipping) },
+        shipDateStamp: shipDate(),
         pickupType: pickupType(),
         rateRequestType: ["ACCOUNT", "LIST"],
         packagingType: "YOUR_PACKAGING",
@@ -178,23 +229,22 @@ export async function quoteFedExRates(shipping: ShippingAddress): Promise<
       },
     }),
   });
-  const body = (await res.json()) as {
+  const body = (await readFedExBody(res)) as {
     output?: {
       rateReplyDetails?: {
         serviceType?: string;
         serviceName?: string;
         ratedShipmentDetails?: {
           rateType?: string;
-          totalNetCharge?: number | string;
-          totalNetFedExCharge?: number | string;
+          totalNetCharge?: unknown;
+          totalNetFedExCharge?: unknown;
         }[];
       }[];
     };
-    errors?: { message?: string }[];
-  };
-  const rows = body.output?.rateReplyDetails ?? [];
+  } | null;
+  const rows = body?.output?.rateReplyDetails ?? [];
   if (!res.ok || rows.length === 0) {
-    throw new Error(body.errors?.[0]?.message || "FedEx could not quote this address.");
+    throw new Error(fedexErrorMessage(body, "FedEx could not quote this address."));
   }
 
   const quoted = rows
@@ -212,19 +262,10 @@ export async function quoteFedExRates(shipping: ShippingAddress): Promise<
   return (preferred.length > 0 ? preferred : quoted).sort((a, b) => a.amount - b.amount);
 }
 
-function shipDate(): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-}
-
 export async function buyFedExShippingLabel(
   shipping: ShippingAddress,
   serviceType: string
-): Promise<{ trackingNumber: string; carrier: string; labelUrl: string }> {
+): Promise<{ trackingNumber: string; carrier: string; labelUrl: string; amount?: string }> {
   const token = await fedexAccessToken();
   const account = accountNumber();
   const name = (shipping.full_name.trim() || "Customer").slice(0, 35);
@@ -265,6 +306,7 @@ export async function buyFedExShippingLabel(
           },
         },
         labelSpecification: {
+          labelFormatType: "COMMON2D",
           imageType: "PDF",
           labelStockType: "PAPER_4X6",
         },
@@ -274,31 +316,38 @@ export async function buyFedExShippingLabel(
     }),
   });
 
-  const body = (await res.json()) as {
+  const body = (await readFedExBody(res)) as {
     output?: {
       transactionShipments?: {
         masterTrackingNumber?: string;
+        completedShipmentDetail?: {
+          shipmentRating?: {
+            shipmentRateDetails?: { rateType?: string; totalNetCharge?: unknown }[];
+          };
+        };
         pieceResponses?: {
           trackingNumber?: string;
           packageDocuments?: { encodedLabel?: string; contentType?: string }[];
         }[];
       }[];
     };
-    errors?: { message?: string }[];
-  };
+  } | null;
 
-  const shipment = body.output?.transactionShipments?.[0];
+  const shipment = body?.output?.transactionShipments?.[0];
   const piece = shipment?.pieceResponses?.[0];
   const label = piece?.packageDocuments?.find((doc) => doc.encodedLabel)?.encodedLabel;
   const tracking = piece?.trackingNumber || shipment?.masterTrackingNumber;
 
   if (!res.ok || !label || !tracking) {
-    throw new Error(body.errors?.[0]?.message || "FedEx could not create this label.");
+    throw new Error(fedexErrorMessage(body, "FedEx could not create this label."));
   }
+
+  const billed = accountRateAmount(shipment?.completedShipmentDetail?.shipmentRating?.shipmentRateDetails ?? []);
 
   return {
     trackingNumber: tracking,
     carrier: fedexServiceName(serviceType),
     labelUrl: `data:application/pdf;base64,${label}`,
+    amount: billed != null ? billed.toFixed(2) : undefined,
   };
 }

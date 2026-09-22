@@ -21,6 +21,19 @@ import {
   orderRefundBreakdown,
 } from "@/lib/types";
 
+function openShippingLabel(labelUrl: string) {
+  const match = labelUrl.match(/^data:([^;,]+);base64,(.+)$/);
+  if (!match) {
+    window.open(labelUrl, "_blank", "noopener,noreferrer");
+    return;
+  }
+  const binary = atob(match[2]);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const blobUrl = URL.createObjectURL(new Blob([bytes], { type: match[1] }));
+  window.open(blobUrl, "_blank", "noopener,noreferrer");
+}
+
 export function OrderTools({
   order,
   labelsEnabled,
@@ -39,7 +52,7 @@ export function OrderTools({
       const result = await fn();
       if (result.ok) {
         toast.success(result.message);
-        if (result.labelUrl) window.open(result.labelUrl, "_blank", "noopener,noreferrer");
+        if (result.labelUrl) openShippingLabel(result.labelUrl);
         if (result.message.toLowerCase().includes("refund")) setRefundedLocal(true);
       } else {
         toast.error(result.message);
@@ -66,7 +79,7 @@ export function OrderTools({
 
   const printLabel = () => {
     if (hasLabel && order.shipping_label_url) {
-      window.open(order.shipping_label_url, "_blank", "noopener,noreferrer");
+      openShippingLabel(order.shipping_label_url);
       return;
     }
     if (
