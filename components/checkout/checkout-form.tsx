@@ -44,27 +44,6 @@ interface TokenSuccessResponse {
   };
 }
 
-interface TokenErrorResponse {
-  error?: { message?: string };
-  reasons?: { message?: string }[];
-}
-
-interface HostedCardForm {
-  on(event: "token-success", handler: (resp: TokenSuccessResponse) => void): void;
-  on(event: "token-error", handler: (resp: TokenErrorResponse) => void): void;
-}
-
-declare global {
-  interface Window {
-    GlobalPayments?: {
-      configure(options: { publicApiKey: string }): void;
-      creditCard: {
-        form(target: string, options?: { style?: string }): HostedCardForm;
-      };
-    };
-  }
-}
-
 function tokenPaymentReference(resp: TokenSuccessResponse): string {
   return resp.paymentReference || resp.token || "";
 }

@@ -20,31 +20,6 @@ import {
   HEARTLAND_TEST_CARDS,
 } from "@/lib/heartland-cert-script";
 
-interface TokenSuccessResponse {
-  paymentReference: string;
-}
-
-interface TokenErrorResponse {
-  error?: { message?: string };
-  reasons?: { message?: string }[];
-}
-
-interface HostedCardForm {
-  on(event: "token-success", handler: (resp: TokenSuccessResponse) => void): void;
-  on(event: "token-error", handler: (resp: TokenErrorResponse) => void): void;
-}
-
-declare global {
-  interface Window {
-    GlobalPayments?: {
-      configure(options: { publicApiKey: string }): void;
-      creditCard: {
-        form(target: string, options?: { style?: string }): HostedCardForm;
-      };
-    };
-  }
-}
-
 type PendingOp = { type: "sale"; testId: string };
 
 function resultLine(result: CertActionResult): string {
@@ -124,7 +99,12 @@ export function CertificationRunner({ publicKey }: { publicKey: string | null })
       style: "default",
     });
     cardForm.on("token-success", (resp) => {
-      void handleToken(resp.paymentReference);
+      const token = resp.paymentReference || resp.token;
+      if (!token) {
+        toast.error("Card tokenization did not return a payment token.");
+        return;
+      }
+      void handleToken(token);
     });
     cardForm.on("token-error", (resp) => {
       const message =
