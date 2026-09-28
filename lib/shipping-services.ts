@@ -59,19 +59,100 @@ export function shippingSpeedRank(code: string): number {
   }
 }
 
+export interface QuotedShippingRate {
+  amount: number;
+  code: string;
+  name: string;
+  arrives?: string | null;
+}
+
 export interface FeaturedShippingOption {
   amount: number;
   code: string;
   name: string;
   headline: string;
   detail: string;
+  estimate: string;
 }
 
-/** Cheapest, fastest, and lowest-emission choices. One service is listed once when it fills two roles. */
-export function selectFeaturedShippingOptions(
-  rates: { amount: number; code: string; name: string }[]
-): FeaturedShippingOption[] {
-  const unique: { amount: number; code: string; name: string }[] = [];
+/** Next weekday ship date in Cumming, GA, as YYYY-MM-DD. */
+export function nextShipDate(from = new Date()): string {
+  let cursor = from;
+  for (let i = 0; i < 8; i++) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      weekday: "short",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(cursor);
+    const weekday = parts.find((part) => part.type === "weekday")?.value;
+    const year = parts.find((part) => part.type === "year")?.value;
+    const month = parts.find((part) => part.type === "month")?.value;
+    const day = parts.find((part) => part.type === "day")?.value;
+    if (weekday !== "Sat" && weekday !== "Sun" && year && month && day) {
+      return `${year}-${month}-${day}`;
+    }
+    cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000);
+  }
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(from);
+}
+
+export function addBusinessDays(isoDate: string, days: number): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
+  if (!match) return isoDate;
+  const cursor = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12));
+  let left = Math.max(0, days);
+  while (left > 0) {
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    const weekday = cursor.getUTCDay();
+    if (weekday !== 0 && weekday !== 6) left -= 1;
+  }
+  return cursor.toISOString().slice(0, 10);
+}
+
+export function formatArrivalEstimate(isoDate: string): string | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
+  if (!match) return null;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12));
+  if (Number.isNaN(date.getTime())) return null;
+  const formatted = new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(date);
+  return `Arrives ${formatted}`;
+}
+
+/** Express and deferred air have a fixed transit. Ground depends on the destination. */
+function fixedTransitBusinessDays(code: string): number | null {
+  switch (shippingSpeedRank(code)) {
+    case 1:
+    case 2:
+    case 3:
+      return 1;
+    case 4:
+    case 5:
+      return 2;
+    case 6:
+      return 3;
+    default:
+      return null;
+  }
+}
+
+export function shippingArrivalEstimate(code: string, arrives?: string | null): string {
+  const dated = arrives ? formatArrivalEstimate(arrives) : null;
+  if (dated) return dated;
+  const days = fixedTransitBusinessDays(code);
+  if (days == null) return "Arrives in 1–5 business days";
+  return formatArrivalEstimate(addBusinessDays(nextShipDate(), days)) ?? "Arrives in 1–5 business days";
+}
+
+/** Cheapest, best-priced middle speed, fastest, and lowest-emission. One service is listed once. */
+export function selectFeaturedShippingOptions(rates: QuotedShippingRate[]): FeaturedShippingOption[] {
+  const unique: QuotedShippingRate[] = [];
   const seen = new Set<string>();
   for (const rate of rates) {
     const code = rate.code.trim();
@@ -102,23 +183,40 @@ export function selectFeaturedShippingOptions(
     if (!current.includes(label)) current.push(label);
     labels.set(rate.code, current);
   };
+  const taken = new Set([cheapest.code, fastest.code]);
+  const fasterThanCheap = shippingSpeedRank(cheapest.code);
+  const slowerThanFast = shippingSpeedRank(fastest.code);
+  const between = unique.filter((rate) => {
+    if (taken.has(rate.code)) return false;
+    const rank = shippingSpeedRank(rate.code);
+    return rank > slowerThanFast && rank < fasterThanCheap;
+  });
+  const middle = [...between].sort(
+    (a, b) => a.amount - b.amount || shippingSpeedRank(a.code) - shippingSpeedRank(b.code)
+  )[0];
+
   assign(cheapest, "Cheapest");
   assign(eco, "Eco-friendly");
+  if (middle) assign(middle, "Middle");
   assign(fastest, "Fastest");
 
   const picked: FeaturedShippingOption[] = [];
   const pickedCodes = new Set<string>();
-  for (const rate of [cheapest, eco, fastest]) {
-    if (pickedCodes.has(rate.code)) continue;
+  for (const rate of [cheapest, eco, middle, fastest]) {
+    if (!rate || pickedCodes.has(rate.code)) continue;
     pickedCodes.add(rate.code);
     const headline = (labels.get(rate.code) ?? []).join(" · ");
+    const estimate = shippingArrivalEstimate(rate.code, rate.arrives);
     picked.push({
       amount: rate.amount,
       code: rate.code,
       detail: rate.name,
+      estimate,
       headline,
       name: `${headline} · ${rate.name}`,
     });
   }
-  return picked;
+  return picked.sort(
+    (a, b) => shippingSpeedRank(b.code) - shippingSpeedRank(a.code) || a.amount - b.amount
+  );
 }

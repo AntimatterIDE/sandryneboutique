@@ -1,6 +1,6 @@
 import "server-only";
 import { STORE_CONTACT } from "@/lib/constants";
-import { FEDEX_CHECKOUT_SERVICES } from "@/lib/shipping-services";
+import { addBusinessDays, FEDEX_CHECKOUT_SERVICES, nextShipDate } from "@/lib/shipping-services";
 import type { ShippingAddress } from "@/lib/types";
 
 export { isFedExServiceCode } from "@/lib/shipping-services";
@@ -209,8 +209,79 @@ function accountRateAmount(details: {
   return moneyAmount(preferred.totalNetCharge ?? preferred.totalNetFedExCharge);
 }
 
+function fedexArrivalDate(row: {
+  commit?: {
+    dateDetail?: { dayFormat?: string };
+    transitDays?: { minimumTransitTime?: string; maximumTransitTime?: string };
+  };
+  operationalDetail?: { deliveryDate?: string; commitDate?: string };
+}): string | undefined {
+  const raw =
+    row.commit?.dateDetail?.dayFormat ||
+    row.operationalDetail?.deliveryDate ||
+    row.operationalDetail?.commitDate;
+  const dated = normalizeCarrierDate(raw);
+  if (dated) return dated;
+  const transit = fedexTransitDays(row.commit?.transitDays?.maximumTransitTime || row.commit?.transitDays?.minimumTransitTime);
+  if (transit == null) return undefined;
+  return addBusinessDays(nextShipDate(), transit);
+}
+
+function normalizeCarrierDate(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const compact = /^(\d{4})(\d{2})(\d{2})/.exec(value);
+  if (compact) return `${compact[1]}-${compact[2]}-${compact[3]}`;
+  const named = /^([A-Za-z]{3})-(\d{2})-(\d{4})$/.exec(value.trim());
+  if (!named) return undefined;
+  const months: Record<string, string> = {
+    Jan: "01",
+    Feb: "02",
+    Mar: "03",
+    Apr: "04",
+    May: "05",
+    Jun: "06",
+    Jul: "07",
+    Aug: "08",
+    Sep: "09",
+    Oct: "10",
+    Nov: "11",
+    Dec: "12",
+  };
+  const month = months[named[1]];
+  return month ? `${named[3]}-${month}-${named[2]}` : undefined;
+}
+
+function fedexTransitDays(value?: string): number | undefined {
+  switch ((value ?? "").toUpperCase()) {
+    case "ONE_DAY":
+      return 1;
+    case "TWO_DAYS":
+      return 2;
+    case "THREE_DAYS":
+      return 3;
+    case "FOUR_DAYS":
+      return 4;
+    case "FIVE_DAYS":
+      return 5;
+    case "SIX_DAYS":
+      return 6;
+    case "SEVEN_DAYS":
+      return 7;
+    case "EIGHT_DAYS":
+      return 8;
+    case "NINE_DAYS":
+      return 9;
+    case "TEN_DAYS":
+      return 10;
+    default:
+      return undefined;
+  }
+}
+
 export async function quoteFedExRates(shipping: ShippingAddress): Promise<
-  { code: string; name: string; amount: number }[]
+  { code: string; name: string; amount: number; arrives?: string }[]
 > {
   const token = await fedexAccessToken();
   const res = await fetch(`${fedexBaseUrl()}/rate/v1/rates/quotes`, {
@@ -227,6 +298,7 @@ export async function quoteFedExRates(shipping: ShippingAddress): Promise<
         packagingType: "YOUR_PACKAGING",
         requestedPackageLineItems: [packageLine()],
       },
+      rateRequestControlParameters: { returnTransitTimes: true },
     }),
   });
   const body = (await readFedExBody(res)) as {
@@ -234,6 +306,11 @@ export async function quoteFedExRates(shipping: ShippingAddress): Promise<
       rateReplyDetails?: {
         serviceType?: string;
         serviceName?: string;
+        commit?: {
+          dateDetail?: { dayFormat?: string };
+          transitDays?: { minimumTransitTime?: string; maximumTransitTime?: string };
+        };
+        operationalDetail?: { deliveryDate?: string; commitDate?: string };
         ratedShipmentDetails?: {
           rateType?: string;
           totalNetCharge?: unknown;
@@ -255,6 +332,7 @@ export async function quoteFedExRates(shipping: ShippingAddress): Promise<
         code,
         name: row.serviceName?.trim() || fedexServiceName(code),
         amount: amount ?? NaN,
+        arrives: fedexArrivalDate(row),
       };
     })
     .filter((row) => row.code && Number.isFinite(row.amount) && row.amount >= 0);

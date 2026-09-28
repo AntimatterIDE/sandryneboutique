@@ -2,8 +2,10 @@ import "server-only";
 import { STORE_CONTACT } from "@/lib/constants";
 import { fedexConfigured, quoteFedExRates } from "@/lib/fedex";
 import {
+  addBusinessDays,
   isFedExServiceCode,
   isFreeEligibleShippingService,
+  nextShipDate,
   selectFeaturedShippingOptions,
 } from "@/lib/shipping-services";
 import type { ShippingAddress } from "@/lib/types";
@@ -12,6 +14,7 @@ export interface UpsRate {
   code: string;
   name: string;
   amount: string;
+  arrives?: string;
 }
 
 export interface PurchasedLabel {
@@ -174,6 +177,10 @@ export async function quoteUpsRates(shipping: ShippingAddress): Promise<UpsRate[
           ShipmentRatingOptions: {
             NegotiatedRatesIndicator: "Y",
           },
+          DeliveryTimeInformation: {
+            PackageBillType: "03",
+            Pickup: { Date: nextShipDate().replace(/-/g, "") },
+          },
           Package: packagePayload(),
         },
       },
@@ -186,6 +193,20 @@ export async function quoteUpsRates(shipping: ShippingAddress): Promise<UpsRate[
         Service?: { Code?: string; Description?: string };
         TotalCharges?: { MonetaryValue?: string };
         NegotiatedRateCharges?: { TotalCharge?: { MonetaryValue?: string } };
+        GuaranteedDelivery?: { BusinessDaysInTransit?: string };
+        TimeInTransit?: {
+          ServiceSummary?: {
+            EstimatedArrival?: {
+              Arrival?: { Date?: string };
+              BusinessDaysInTransit?: string;
+            };
+          } | {
+            EstimatedArrival?: {
+              Arrival?: { Date?: string };
+              BusinessDaysInTransit?: string;
+            };
+          }[];
+        };
       }[];
     };
     response?: { errors?: { message?: string }[] };
@@ -201,9 +222,42 @@ export async function quoteUpsRates(shipping: ShippingAddress): Promise<UpsRate[
       code: row.Service?.Code || "",
       name: row.Service?.Description || serviceName(row.Service?.Code || ""),
       amount: rateAmount(row),
+      arrives: upsArrivalDate(row),
     }))
     .filter((row) => row.code)
     .sort((a, b) => Number(a.amount) - Number(b.amount));
+}
+
+function upsArrivalDate(row: {
+  GuaranteedDelivery?: { BusinessDaysInTransit?: string };
+  TimeInTransit?: {
+    ServiceSummary?:
+      | {
+          EstimatedArrival?: {
+            Arrival?: { Date?: string };
+            BusinessDaysInTransit?: string;
+          };
+        }
+      | {
+          EstimatedArrival?: {
+            Arrival?: { Date?: string };
+            BusinessDaysInTransit?: string;
+          };
+        }[];
+  };
+}): string | undefined {
+  const summary = row.TimeInTransit?.ServiceSummary;
+  const estimated = Array.isArray(summary) ? summary[0]?.EstimatedArrival : summary?.EstimatedArrival;
+  const dated = normalizeUpsDate(estimated?.Arrival?.Date);
+  if (dated) return dated;
+  const days = Number(estimated?.BusinessDaysInTransit || row.GuaranteedDelivery?.BusinessDaysInTransit);
+  if (!Number.isFinite(days) || days <= 0) return undefined;
+  return addBusinessDays(nextShipDate(), days);
+}
+
+function normalizeUpsDate(value?: string): string | undefined {
+  const match = /^(\d{4})(\d{2})(\d{2})$/.exec(value ?? "");
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : undefined;
 }
 
 /** Standard checkout rate: UPS Ground, or the cheapest quoted service if Ground is unavailable. */
@@ -360,8 +414,9 @@ export async function quoteCheckoutShippingOptions(shipping: ShippingAddress): P
   name: string;
   headline: string;
   detail: string;
+  estimate: string;
 }[]> {
-  const tasks: Promise<{ amount: number; code: string; name: string }[]>[] = [];
+  const tasks: Promise<{ amount: number; code: string; name: string; arrives?: string }[]>[] = [];
   if (upsConfigured()) {
     tasks.push(
       quoteUpsRates(shipping).then((rates) => {
@@ -373,6 +428,7 @@ export async function quoteCheckoutShippingOptions(shipping: ShippingAddress): P
               amount,
               code: row.code,
               name: displayServiceName(row.code, row.name),
+              arrives: row.arrives,
             };
           })
           .filter((row) => Number.isFinite(row.amount) && row.amount >= 0);
@@ -388,7 +444,7 @@ export async function quoteCheckoutShippingOptions(shipping: ShippingAddress): P
   }
 
   const settled = await Promise.allSettled(tasks);
-  const list: { amount: number; code: string; name: string }[] = [];
+  const list: { amount: number; code: string; name: string; arrives?: string }[] = [];
   const errors: string[] = [];
   for (const result of settled) {
     if (result.status === "fulfilled") list.push(...result.value);

@@ -65,6 +65,7 @@ export type CheckoutShippingOption = {
   code: string;
   headline?: string;
   detail?: string;
+  estimate?: string;
 };
 
 export type CheckoutShippingQuote =
@@ -94,6 +95,7 @@ export async function quoteCheckoutShipping(shipping: ShippingAddress): Promise<
         code: option.code,
         headline: option.headline,
         detail: option.detail,
+        estimate: option.estimate,
       })),
     };
   } catch (err) {

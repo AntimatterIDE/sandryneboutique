@@ -478,7 +478,7 @@ export function CheckoutForm({
             </h2>
             {!addressReady ? (
               <p className="text-sm text-muted-foreground">
-                Enter your shipping address to see the cheapest, fastest, and lowest-emission options.
+                Enter your shipping address to see the cheapest, middle, and fastest options with arrival dates.
               </p>
             ) : quoting ? (
               <p className="text-sm text-muted-foreground">Calculating shipping rates…</p>
@@ -505,6 +505,9 @@ export function CheckoutForm({
                           <span className="block truncate">{rate.headline ?? rate.service}</span>
                           {rate.detail ? (
                             <span className="block truncate text-xs text-muted-foreground">{rate.detail}</span>
+                          ) : null}
+                          {rate.estimate ? (
+                            <span className="block truncate text-xs text-muted-foreground">{rate.estimate}</span>
                           ) : null}
                         </span>
                       </span>
