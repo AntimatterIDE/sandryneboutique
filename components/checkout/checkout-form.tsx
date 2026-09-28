@@ -478,7 +478,7 @@ export function CheckoutForm({
             </h2>
             {!addressReady ? (
               <p className="text-sm text-muted-foreground">
-                Enter your shipping address to see UPS and FedEx options and prices.
+                Enter your shipping address to see the cheapest, fastest, and lowest-emission options.
               </p>
             ) : quoting ? (
               <p className="text-sm text-muted-foreground">Calculating shipping rates…</p>
@@ -501,7 +501,12 @@ export function CheckoutForm({
                           onChange={() => setSelectedShippingCode(rate.code)}
                           className="size-4 accent-foreground"
                         />
-                        <span className="truncate">{rate.service}</span>
+                        <span className="min-w-0">
+                          <span className="block truncate">{rate.headline ?? rate.service}</span>
+                          {rate.detail ? (
+                            <span className="block truncate text-xs text-muted-foreground">{rate.detail}</span>
+                          ) : null}
+                        </span>
                       </span>
                       <span className="tabular-nums shrink-0">
                         {price === 0 ? "Free" : formatPrice(price)}
@@ -511,8 +516,8 @@ export function CheckoutForm({
                 })}
                 {qualifiesFree ? (
                   <p className="text-[11px] text-muted-foreground leading-relaxed pt-1">
-                    Orders over {formatPrice(FREE_SHIPPING_THRESHOLD)} include free UPS Ground or
-                    FedEx Ground. Faster options are available at the quoted rate.
+                    Orders over {formatPrice(FREE_SHIPPING_THRESHOLD)} include free ground shipping.
+                    Faster delivery is available at the quoted rate.
                   </p>
                 ) : null}
               </div>

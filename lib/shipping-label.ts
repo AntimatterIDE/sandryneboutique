@@ -1,7 +1,11 @@
 import "server-only";
 import { STORE_CONTACT } from "@/lib/constants";
 import { fedexConfigured, quoteFedExRates } from "@/lib/fedex";
-import { isFedExServiceCode, isFreeEligibleShippingService } from "@/lib/shipping-services";
+import {
+  isFedExServiceCode,
+  isFreeEligibleShippingService,
+  selectFeaturedShippingOptions,
+} from "@/lib/shipping-services";
 import type { ShippingAddress } from "@/lib/types";
 
 export interface UpsRate {
@@ -354,6 +358,8 @@ export async function quoteCheckoutShippingOptions(shipping: ShippingAddress): P
   amount: number;
   code: string;
   name: string;
+  headline: string;
+  detail: string;
 }[]> {
   const tasks: Promise<{ amount: number; code: string; name: string }[]>[] = [];
   if (upsConfigured()) {
@@ -393,12 +399,5 @@ export async function quoteCheckoutShippingOptions(shipping: ShippingAddress): P
     throw new Error(errors.join(" ") || "Could not quote shipping for this address.");
   }
 
-  const seen = new Set<string>();
-  return list
-    .filter((row) => {
-      if (seen.has(row.code)) return false;
-      seen.add(row.code);
-      return true;
-    })
-    .sort((a, b) => a.amount - b.amount);
+  return selectFeaturedShippingOptions(list);
 }
