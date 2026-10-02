@@ -36,6 +36,44 @@ export function shippingLabelsConfigured(): boolean {
   return upsConfigured() || fedexConfigured();
 }
 
+/** Login plus an empty ship request. A 400 means Shipping is enabled and no label was bought. */
+export async function upsShipApiStatus(): Promise<{ ok: boolean; detail: string }> {
+  if (!upsConfigured()) {
+    return {
+      ok: false,
+      detail: "Missing UPS_CLIENT_ID, UPS_CLIENT_SECRET, or UPS_ACCOUNT_NUMBER.",
+    };
+  }
+  try {
+    const token = await upsAccessToken();
+    const res = await fetch(`${upsBaseUrl()}/api/shipments/v2409/ship`, {
+      method: "POST",
+      headers: upsHeaders(token),
+      body: JSON.stringify({}),
+    });
+    const body = (await res.json().catch(() => null)) as {
+      response?: { errors?: { message?: string; code?: string }[] };
+    } | null;
+    const message = body?.response?.errors?.[0]?.message || `UPS Shipping API responded ${res.status}.`;
+    const code = body?.response?.errors?.[0]?.code || "";
+    if (res.status === 401 || res.status === 403 || /not authorized|unauthorized/i.test(`${code} ${message}`)) {
+      return {
+        ok: false,
+        detail: `UPS login worked, but the Shipping product is not enabled on the UPS app. Add Rating and Shipping at developer.ups.com. ${message}`,
+      };
+    }
+    if (res.status === 400 || res.status === 422) {
+      return {
+        ok: true,
+        detail: `Shipping API accepted the ${process.env.UPS_ENV?.trim() || "production"} credentials. Printing a real label from an order is what bills the account.`,
+      };
+    }
+    return { ok: res.ok, detail: message };
+  } catch (err) {
+    return { ok: false, detail: err instanceof Error ? err.message : "UPS Shipping API check failed." };
+  }
+}
+
 function upsBaseUrl(): string {
   const env = process.env.UPS_ENV?.trim().toLowerCase();
   return env === "test" || env === "cie"

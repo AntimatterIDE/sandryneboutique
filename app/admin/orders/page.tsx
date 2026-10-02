@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { OrderStatusSelect } from "@/components/admin/order-status-select";
 import { OrderTools } from "@/components/admin/order-tools";
 import { OrdersToolbar } from "@/components/admin/orders-toolbar";
+import { ShippingGuide } from "@/components/admin/shipping-guide";
 import { shippingLabelsConfigured } from "@/lib/shipping-label";
 import { createPrivilegedClient } from "@/lib/supabase/server";
 import { supabaseConfigured } from "@/lib/data/products";
@@ -62,6 +63,10 @@ export default async function AdminOrdersPage({
     }
   }
 
+  const missingHeartland = orders.filter(
+    (order) => order.status === "paid" && order.heartland_sales_order_id == null
+  ).length;
+
   return (
     <div className="space-y-6 sm:space-y-8">
       <header>
@@ -71,6 +76,24 @@ export default async function AdminOrdersPage({
           {activeFilter !== "all" || queryText ? " matching filters" : ""}.
         </p>
       </header>
+
+      <ShippingGuide />
+
+      {missingHeartland > 0 ? (
+        <p className="text-sm border border-foreground/15 bg-muted/30 px-4 py-3 leading-relaxed">
+          {missingHeartland} paid {missingHeartland === 1 ? "order is" : "orders are"} not in Heartland yet. Open each
+          one and click Send to Heartland. They will not appear under{" "}
+          <a
+            href="https://sandryneboutique.retail.heartland.us/#sales/orders"
+            className="underline underline-offset-2"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Sales Orders
+          </a>{" "}
+          until that number is filled in.
+        </p>
+      ) : null}
 
       <Suspense>
         <OrdersToolbar />
@@ -233,10 +256,9 @@ export default async function AdminOrdersPage({
                         {order.heartland_transaction_id ?? "—"}
                       </p>
                       <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
-                        Website sales live on the Heartland eCommerce / Portico device, not the
-                        in-store register. Last-4 search on the POS only finds swiped store sales.
-                        In Merchant Center, search this Gateway Txn ID (or invoice starting with W
-                        plus the last 4).
+                        This is the card charge in Global Payments Merchant Center, not a swiped
+                        store ticket. Search this Gateway Txn ID. Last-4 search on the POS will not
+                        find it.
                       </p>
                     </div>
                     <div>
@@ -246,11 +268,28 @@ export default async function AdminOrdersPage({
                       <p className="text-xs font-mono break-all">
                         {order.heartland_sales_order_id != null
                           ? String(order.heartland_sales_order_id)
-                          : "—"}
+                          : "— not in Heartland yet"}
                         {order.heartland_sync_status
                           ? ` (${order.heartland_sync_status})`
                           : ""}
                       </p>
+                      <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
+                        Match this number on{" "}
+                        <a
+                          href="https://sandryneboutique.retail.heartland.us/#sales/orders"
+                          className="underline underline-offset-2"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Heartland Sales Orders
+                        </a>
+                        . Filters: Any Status, All Location. Pending with invoiced qty 0 is still the order.
+                      </p>
+                      {order.heartland_sync_error ? (
+                        <p className="text-[11px] text-destructive mt-1 leading-relaxed break-words">
+                          {order.heartland_sync_error}
+                        </p>
+                      ) : null}
                     </div>
                     <div>
                       <h3 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground mb-2">

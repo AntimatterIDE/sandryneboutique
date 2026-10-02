@@ -1182,13 +1182,20 @@ export async function saveOrderTracking(
 
   const tracking = trackingNumber.trim();
   if (!tracking) return { ok: false, message: "Enter a tracking number." };
+  const carrierName = trackingCarrier.trim();
+  if (!/^(ups|fedex)$/i.test(carrierName)) {
+    return {
+      ok: false,
+      message: "Enter the carrier as UPS or FedEx. Match the label you bought — do not leave it as UPS if the package is FedEx.",
+    };
+  }
 
   const supabase = await createPrivilegedClient();
   const { error } = await supabase
     .from("orders")
     .update({
       tracking_number: tracking,
-      tracking_carrier: trackingCarrier.trim() || "UPS",
+      tracking_carrier: /^fedex$/i.test(carrierName) ? "FedEx" : "UPS",
       status: "shipped",
     })
     .eq("id", orderId);
@@ -1246,14 +1253,30 @@ export async function buyOrderShippingLabel(
 
   try {
     const { buyCheckoutShippingLabel } = await import("@/lib/shipping-label");
-    const paidCode =
-      typeof order.shipping_service_code === "string" && order.shipping_service_code.trim()
-        ? order.shipping_service_code.trim()
-        : "03";
-    const label = await buyCheckoutShippingLabel(
-      order.shipping_address,
-      serviceCode.trim() || paidCode
-    );
+    const { isFedExServiceCode, paidShippingCarrier } = await import("@/lib/shipping-services");
+    const storedCode =
+      typeof order.shipping_service_code === "string" ? order.shipping_service_code.trim() : "";
+    const storedName = typeof order.shipping_service === "string" ? order.shipping_service.trim() : "";
+    // The database is the source of truth. A missing code used to fall through
+    // to UPS Ground (03) and print the wrong carrier.
+    const requested = serviceCode.trim();
+    const code = storedCode && storedCode !== "flat" ? storedCode : requested === "03" ? "" : requested;
+    const carrier = paidShippingCarrier(storedName, code);
+    if (!code || code === "flat" || !carrier) {
+      return {
+        ok: false,
+        message:
+          "This order has no saved UPS or FedEx service, so a label was not bought. Check the order confirmation email for the carrier the customer paid for, buy that label, then enter the tracking number. Do not print UPS for a FedEx shipment.",
+      };
+    }
+    if (carrier === "FedEx" && !isFedExServiceCode(code)) {
+      return {
+        ok: false,
+        message:
+          "This customer paid for FedEx, but the saved service code is not a FedEx code. A UPS label was not bought. Create the FedEx label in FedEx Ship Manager and paste that tracking number.",
+      };
+    }
+    const label = await buyCheckoutShippingLabel(order.shipping_address, code);
     await supabase
       .from("orders")
       .update({

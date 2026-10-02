@@ -586,6 +586,68 @@ function postalDigits(zip: string | null | undefined): string {
   return (zip ?? "").replace(/\D/g, "");
 }
 
+const US_STATE_CODES: Record<string, string> = {
+  alabama: "AL",
+  alaska: "AK",
+  arizona: "AZ",
+  arkansas: "AR",
+  california: "CA",
+  colorado: "CO",
+  connecticut: "CT",
+  delaware: "DE",
+  "district of columbia": "DC",
+  florida: "FL",
+  georgia: "GA",
+  hawaii: "HI",
+  idaho: "ID",
+  illinois: "IL",
+  indiana: "IN",
+  iowa: "IA",
+  kansas: "KS",
+  kentucky: "KY",
+  louisiana: "LA",
+  maine: "ME",
+  maryland: "MD",
+  massachusetts: "MA",
+  michigan: "MI",
+  minnesota: "MN",
+  mississippi: "MS",
+  missouri: "MO",
+  montana: "MT",
+  nebraska: "NE",
+  nevada: "NV",
+  "new hampshire": "NH",
+  "new jersey": "NJ",
+  "new mexico": "NM",
+  "new york": "NY",
+  "north carolina": "NC",
+  "north dakota": "ND",
+  ohio: "OH",
+  oklahoma: "OK",
+  oregon: "OR",
+  pennsylvania: "PA",
+  "rhode island": "RI",
+  "south carolina": "SC",
+  "south dakota": "SD",
+  tennessee: "TN",
+  texas: "TX",
+  utah: "UT",
+  vermont: "VT",
+  virginia: "VA",
+  washington: "WA",
+  "west virginia": "WV",
+  wisconsin: "WI",
+  wyoming: "WY",
+};
+
+/** Heartland addresses reject full state names like "Georgia". */
+export function retailState(state: string | null | undefined): string {
+  const raw = (state ?? "").trim().replace(/\./g, "");
+  if (!raw) return raw;
+  if (/^[A-Za-z]{2}$/.test(raw)) return raw.toUpperCase();
+  return US_STATE_CODES[raw.toLowerCase()] ?? raw;
+}
+
 export async function createCustomerAddress(
   customerId: number,
   address: {
@@ -605,7 +667,7 @@ export async function createCustomerAddress(
     line_1: address.address_1,
     line_2: address.address_2 || null,
     city: address.city,
-    state: address.state,
+    state: retailState(address.state),
     postal_code: address.zip,
     country: retailCountry(address.country),
   };
@@ -824,6 +886,18 @@ export async function addOrderPayment(
   const description = descriptionParts.join(" ");
   const attempts: Record<string, unknown>[] = [
     {
+      type: "Payments::CustomPayment",
+      amount,
+      payment_type_id: input.payment_type_id,
+      ...(description ? { description } : {}),
+    },
+    {
+      type: "Payments::ExternalPayment",
+      amount,
+      payment_type_id: input.payment_type_id,
+      ...(description ? { description } : {}),
+    },
+    {
       type: "CustomPayment",
       deposit: true,
       amount,
@@ -916,7 +990,7 @@ async function attachSalesOrderAddresses(
     line_1: shipping.line1,
     line_2: shipping.line2 || null,
     city: shipping.city,
-    state: shipping.state,
+    state: retailState(shipping.state),
     postal_code: shipping.postal_code,
     country: retailCountry(shipping.country),
   };
@@ -926,7 +1000,7 @@ async function attachSalesOrderAddresses(
     line_1: billing.line1,
     line_2: billing.line2 || null,
     city: billing.city,
-    state: billing.state,
+    state: retailState(billing.state),
     postal_code: billing.postal_code,
     country: retailCountry(billing.country),
   };

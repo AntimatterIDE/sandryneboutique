@@ -13,4 +13,4 @@ alter table public.orders
 comment on column public.orders.heartland_sync_error is
   'Last Heartland Retail sync error. Cleared when sync succeeds.';
 comment on column public.orders.shipping_label_url is
-  'Purchased UPS label URL (EasyPost).';
+  'Purchased UPS or FedEx label, stored as a data URL.';

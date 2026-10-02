@@ -429,3 +429,39 @@ export async function buyFedExShippingLabel(
     amount: billed != null ? billed.toFixed(2) : undefined,
   };
 }
+
+/** Login plus an empty Ship request. A 400 means the Ship API is enabled and no label was bought. */
+export async function fedexShipApiStatus(): Promise<{ ok: boolean; detail: string }> {
+  if (!fedexConfigured()) {
+    return {
+      ok: false,
+      detail:
+        "Missing FEDEX_API_KEY, FEDEX_SECRET_KEY, or FEDEX_ACCOUNT_NUMBER. Rates and the Ship API both need these.",
+    };
+  }
+  try {
+    const token = await fedexAccessToken();
+    const res = await fetch(`${fedexBaseUrl()}/ship/v1/shipments`, {
+      method: "POST",
+      headers: fedexHeaders(token),
+      body: JSON.stringify({}),
+    });
+    const body = await readFedExBody(res);
+    const message = fedexErrorMessage(body, `FedEx Ship API responded ${res.status}.`);
+    if (res.status === 401 || res.status === 403 || /forbidden|not authorized|unauthorized/i.test(message)) {
+      return {
+        ok: false,
+        detail: `FedEx login worked, but label printing is not enabled. Add the Ship API in the FedEx developer project and complete label certification. ${message}`,
+      };
+    }
+    if (res.status === 400 || res.status === 422) {
+      return {
+        ok: true,
+        detail: `Ship API accepted the ${process.env.FEDEX_ENV?.trim() || "production"} credentials. Printing a real label from an order is what bills the account.`,
+      };
+    }
+    return { ok: false, detail: message };
+  } catch (err) {
+    return { ok: false, detail: err instanceof Error ? err.message : "FedEx Ship API check failed." };
+  }
+}

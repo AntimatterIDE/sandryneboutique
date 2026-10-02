@@ -9,9 +9,10 @@ import {
   buyOrderShippingLabel,
   markReturnReceived,
   refundOrder,
+  retryRetailSync,
   saveOrderTracking,
 } from "@/app/admin/actions";
-import { isFedExServiceCode } from "@/lib/shipping-services";
+import { paidShippingCarrier } from "@/lib/shipping-services";
 import type { Order } from "@/lib/types";
 import {
   formatPrice,
@@ -43,8 +44,11 @@ export function OrderTools({
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const serviceName = order.shipping_service?.trim() || "";
+  const serviceCode = order.shipping_service_code?.trim() || "";
+  const paidCarrier = paidShippingCarrier(serviceName, serviceCode);
   const [tracking, setTracking] = useState(order.tracking_number ?? "");
-  const [carrier, setCarrier] = useState(order.tracking_carrier ?? "UPS");
+  const [carrier, setCarrier] = useState(order.tracking_carrier ?? paidCarrier ?? "");
   const [refundedLocal, setRefundedLocal] = useState(false);
 
   const run = (fn: () => Promise<{ ok: boolean; message: string; labelUrl?: string }>) => {
@@ -71,8 +75,6 @@ export function OrderTools({
   const returnReceived = Boolean(order.return_received_at);
   const shippedOrder = order.status === "shipped" || Boolean(order.tracking_number);
   const waitForReturn = shippedOrder && returnRequested && !returnReceived;
-  const serviceName = order.shipping_service?.trim() || "UPS Ground";
-  const serviceCode = order.shipping_service_code?.trim() || "03";
   const hasLabel = Boolean(order.shipping_label_url);
   const hasTracking = Boolean(order.tracking_number);
   const shipped = order.status === "shipped" || hasTracking;
@@ -82,11 +84,15 @@ export function OrderTools({
       openShippingLabel(order.shipping_label_url);
       return;
     }
+    if (!serviceCode || serviceCode === "flat" || !paidCarrier) {
+      toast.error(
+        "This order has no saved UPS or FedEx service. Check the confirmation email, buy that carrier’s label, then enter the tracking number below. Do not assume UPS."
+      );
+      return;
+    }
     if (
       !confirm(
-        `Print ${serviceName} label? This bills the boutique ${
-          isFedExServiceCode(serviceCode) ? "FedEx" : "UPS"
-        } account and opens the label. The customer already paid shipping at checkout.`
+        `Print ${serviceName || paidCarrier} label? This bills the boutique ${paidCarrier} account and opens the label. The customer already paid shipping at checkout.`
       )
     ) {
       return;
@@ -206,17 +212,49 @@ export function OrderTools({
         )}
       </div>
 
+      {!order.heartland_sales_order_id && order.status !== "cancelled" && !refunded ? (
+        <div>
+          <h3 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground mb-2">
+            Heartland
+          </h3>
+          <p className="text-xs text-muted-foreground mb-2 leading-relaxed">
+            This paid order is not on the Heartland Sales Orders page yet. Sending it does not charge the card again.
+          </p>
+          <Button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              if (
+                !confirm(
+                  "Create the Heartland sales order for this website sale? The card is already charged. The order will show under Sales → Sales Orders."
+                )
+              ) {
+                return;
+              }
+              run(() => retryRetailSync(order.id));
+            }}
+            className="rounded-none tracking-[0.12em] uppercase text-xs w-full"
+          >
+            Send to Heartland
+          </Button>
+        </div>
+      ) : null}
+
       <div>
         <h3 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground mb-2">
           Shipping
         </h3>
         <div className="space-y-2 max-h-[min(32rem,70vh)] overflow-y-auto pr-1">
           <div className="space-y-1 text-sm">
-            <p className="font-medium">{serviceName}</p>
+            <p className="font-medium">
+              {serviceName || (paidCarrier ? paidCarrier : "Carrier not saved")}
+            </p>
             <p className="text-xs text-muted-foreground">
-              {money.shipping === 0
-                ? "Free shipping paid at checkout"
-                : `${formatPrice(money.shipping)} paid at checkout`}
+              {paidCarrier
+                ? money.shipping === 0
+                  ? `Customer paid for ${paidCarrier}. Print that carrier only.`
+                  : `${formatPrice(money.shipping)} paid at checkout for ${paidCarrier}. Print that carrier only.`
+                : "The UPS or FedEx choice was not saved. Read the confirmation email before you buy a label."}
             </p>
             {hasTracking ? (
               <p className="text-sm font-mono break-all pt-1">
@@ -226,7 +264,7 @@ export function OrderTools({
             ) : null}
           </div>
 
-          {labelsEnabled ? (
+          {labelsEnabled && (paidCarrier || hasLabel) ? (
             (hasLabel || !refunded) && (
               <Button
                 type="button"
@@ -234,9 +272,13 @@ export function OrderTools({
                 onClick={printLabel}
                 className="rounded-none tracking-[0.12em] uppercase text-xs w-full"
               >
-                {hasLabel ? "Print label" : `Print ${serviceName} label`}
+                {hasLabel ? `Print ${paidCarrier || "saved"} label` : `Print ${serviceName || paidCarrier} label`}
               </Button>
             )
+          ) : labelsEnabled ? (
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              No label button on this order — the carrier was not saved. Use the confirmation email, buy the UPS or FedEx label named there, then enter tracking below.
+            </p>
           ) : (
             <p className="text-[11px] text-muted-foreground leading-relaxed">
               Add UPS and/or FedEx keys in Vercel to print labels here. FedEx needs{" "}
@@ -254,8 +296,8 @@ export function OrderTools({
               <Input
                 value={carrier}
                 onChange={(e) => setCarrier(e.target.value)}
-                placeholder="Carrier"
-                aria-label="Carrier"
+                placeholder="UPS or FedEx"
+                aria-label="Carrier — type UPS or FedEx"
                 className="rounded-none h-9 text-xs"
               />
               <Input

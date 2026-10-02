@@ -477,38 +477,29 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
     items: orderItems,
   };
 
-  let { data: order, error: orderError } = await admin
-    .from("orders")
-    .insert(orderPayload)
-    .select("id")
-    .single();
+  let payload: Record<string, unknown> = { ...orderPayload };
+  let { data: order, error: orderError } = await admin.from("orders").insert(payload).select("id").single();
 
-  if (orderError) {
-    const { billing_address: _billing, shipping_service: _svc, shipping_service_code: _code, ...withoutService } =
-      orderPayload;
-    void _billing;
-    void _svc;
-    void _code;
-    const retry = await admin.from("orders").insert(withoutService).select("id").single();
-    order = retry.data;
-    orderError = retry.error;
-  }
-
-  if (orderError) {
-    const {
-      tax_amount: _tax,
-      shipping_amount: _ship,
-      shipping_service: _svc2,
-      shipping_service_code: _code2,
-      billing_address: _billing2,
-      ...legacyPayload
-    } = orderPayload;
-    void _svc2;
-    void _code2;
-    void _tax;
-    void _ship;
-    void _billing2;
-    const retry = await admin.from("orders").insert(legacyPayload).select("id").single();
+  // Only drop a column when Postgres says it is missing. A different insert
+  // error must not erase the UPS/FedEx service the customer paid for.
+  const optionalOrderColumns = [
+    "billing_address",
+    "shipping_service",
+    "shipping_service_code",
+    "tax_amount",
+    "shipping_amount",
+  ];
+  for (let attempt = 0; attempt < optionalOrderColumns.length && orderError; attempt++) {
+    const text = `${orderError.message ?? ""} ${orderError.details ?? ""} ${orderError.hint ?? ""}`.toLowerCase();
+    const missing = optionalOrderColumns.filter(
+      (column) =>
+        text.includes(column) &&
+        (text.includes("does not exist") || text.includes("schema cache") || text.includes("could not find"))
+    );
+    if (missing.length === 0) break;
+    payload = { ...payload };
+    for (const column of missing) delete payload[column];
+    const retry = await admin.from("orders").insert(payload).select("id").single();
     order = retry.data;
     orderError = retry.error;
   }

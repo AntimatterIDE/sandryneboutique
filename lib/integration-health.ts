@@ -242,6 +242,20 @@ export async function getIntegrationHealth(): Promise<IntegrationHealthReport> {
       { numeric: true }
     ),
     envCheck("cron-secret", "Cron secret", process.env.CRON_SECRET),
+    envCheck("ups-client", "UPS client ID", process.env.UPS_CLIENT_ID),
+    envCheck("ups-secret", "UPS client secret", process.env.UPS_CLIENT_SECRET),
+    envCheck("ups-account", "UPS account number", process.env.UPS_ACCOUNT_NUMBER, {
+      preview: process.env.UPS_ACCOUNT_NUMBER?.replace(/\s+/g, "").slice(-4)
+        ? `···${process.env.UPS_ACCOUNT_NUMBER.replace(/\s+/g, "").slice(-4)}`
+        : undefined,
+    }),
+    envCheck("fedex-key", "FedEx API key", process.env.FEDEX_API_KEY),
+    envCheck("fedex-secret", "FedEx secret key", process.env.FEDEX_SECRET_KEY),
+    envCheck("fedex-account", "FedEx account number", process.env.FEDEX_ACCOUNT_NUMBER, {
+      preview: process.env.FEDEX_ACCOUNT_NUMBER?.replace(/\s+/g, "").slice(-4)
+        ? `···${process.env.FEDEX_ACCOUNT_NUMBER.replace(/\s+/g, "").slice(-4)}`
+        : undefined,
+    }),
   ];
 
   if (keyMismatch) {
@@ -270,7 +284,12 @@ export async function getIntegrationHealth(): Promise<IntegrationHealthReport> {
     });
   }
 
-  const [whoami, location] = await Promise.all([pingRetailWhoami(), pingRetailLocation()]);
+  const [whoami, location, upsShip, fedexShip] = await Promise.all([
+    pingRetailWhoami(),
+    pingRetailLocation(),
+    import("@/lib/shipping-label").then((mod) => mod.upsShipApiStatus()),
+    import("@/lib/fedex").then((mod) => mod.fedexShipApiStatus()),
+  ]);
 
   const live: HealthCheckItem[] = [
     {
@@ -311,6 +330,18 @@ export async function getIntegrationHealth(): Promise<IntegrationHealthReport> {
       status: "ok",
       detail: "5 charge attempts per IP per 10 minutes.",
     },
+    {
+      id: "ups-ship",
+      label: "UPS label printing",
+      status: upsShip.ok ? "ok" : present(process.env.UPS_CLIENT_ID) ? "error" : "missing",
+      detail: upsShip.detail,
+    },
+    {
+      id: "fedex-ship",
+      label: "FedEx label printing",
+      status: fedexShip.ok ? "ok" : present(process.env.FEDEX_API_KEY) ? "error" : "missing",
+      detail: fedexShip.detail,
+    },
   ];
 
   const tips: string[] = [];
@@ -332,6 +363,16 @@ export async function getIntegrationHealth(): Promise<IntegrationHealthReport> {
   if (heartlandRetailConfigured()) {
     tips.push(
       "In Admin → Products, Look up a Heartland item ID and save so the product can be sold online."
+    );
+  }
+  if (!upsShip.ok) {
+    tips.push(
+      "UPS labels: create an app at https://developer.ups.com with the Rating and Shipping products, then set UPS_CLIENT_ID, UPS_CLIENT_SECRET, UPS_ACCOUNT_NUMBER, and UPS_ENV=production."
+    );
+  }
+  if (!fedexShip.ok) {
+    tips.push(
+      "FedEx labels: in https://developer.fedex.com add both Rates and Transit Times and the Ship API. Set FEDEX_API_KEY, FEDEX_SECRET_KEY, FEDEX_ACCOUNT_NUMBER, and FEDEX_ENV=production. Live labels also need certification — email label@fedex.com. Rates alone will price FedEx at checkout and then refuse to print."
     );
   }
   tips.push(

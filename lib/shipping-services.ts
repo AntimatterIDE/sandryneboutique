@@ -16,6 +16,24 @@ export function isFedExServiceCode(code: string | null | undefined): boolean {
   return FEDEX_CHECKOUT_SERVICES.has(value) || value.startsWith("FEDEX_");
 }
 
+export type PaidShippingCarrier = "UPS" | "FedEx";
+
+/**
+ * Carrier the customer actually paid for.
+ * Returns null when the order did not save a service — do not assume UPS.
+ */
+export function paidShippingCarrier(
+  service?: string | null,
+  code?: string | null
+): PaidShippingCarrier | null {
+  const savedCode = (code ?? "").trim();
+  const savedName = service ?? "";
+  if (isFedExServiceCode(savedCode) || /fedex/i.test(`${savedName} ${savedCode}`)) return "FedEx";
+  if (/^ups\b/i.test(savedName.trim()) || /^\d{2}$/.test(savedCode)) return "UPS";
+  if (/\bups\b/i.test(savedName)) return "UPS";
+  return null;
+}
+
 /** Ground options that become free when the cart qualifies. */
 export function isFreeEligibleShippingService(code: string): boolean {
   const value = code.trim().toUpperCase();
