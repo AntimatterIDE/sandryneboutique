@@ -11,7 +11,6 @@ import { OrderStatusSelect } from "@/components/admin/order-status-select";
 import { OrderTools } from "@/components/admin/order-tools";
 import { OrdersToolbar } from "@/components/admin/orders-toolbar";
 import { ShippingGuide } from "@/components/admin/shipping-guide";
-import { shippingLabelsConfigured } from "@/lib/shipping-label";
 import { createPrivilegedClient } from "@/lib/supabase/server";
 import { supabaseConfigured } from "@/lib/data/products";
 import type { Order, OrderStatus } from "@/lib/types";
@@ -297,7 +296,7 @@ export default async function AdminOrdersPage({
                       </h3>
                       <p className="text-xs font-mono break-all">{order.id}</p>
                     </div>
-                    <OrderTools order={order} labelsEnabled={shippingLabelsConfigured()} />
+                    <OrderTools order={order} />
                   </div>
                 </div>
               </AccordionContent>

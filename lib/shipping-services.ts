@@ -18,6 +18,18 @@ export function isFedExServiceCode(code: string | null | undefined): boolean {
 
 export type PaidShippingCarrier = "UPS" | "FedEx";
 
+/** Logged-in UPS list of labels. Search the tracking number. It starts with 1Z. */
+export const UPS_SHIPMENT_HISTORY_URL = "https://www.ups.com/ship/history?loc=en_US";
+/** Logged-in UPS form that creates a new label. Use this when no tracking number exists yet. */
+export const UPS_CREATE_LABEL_URL = "https://www.ups.com/ship/basic?loc=en_US";
+/** FedEx account login. After login: Ship History to reprint, or Create a Shipment for a new label. */
+export const FEDEX_ACCOUNT_URL = "https://www.fedex.com/en-us/shipping/ship-manager/login.html";
+
+export function carrierAccountUrl(carrier: PaidShippingCarrier, hasTracking: boolean): string {
+  if (carrier === "FedEx") return FEDEX_ACCOUNT_URL;
+  return hasTracking ? UPS_SHIPMENT_HISTORY_URL : UPS_CREATE_LABEL_URL;
+}
+
 /**
  * Carrier the customer actually paid for.
  * Returns null when the order did not save a service — do not assume UPS.

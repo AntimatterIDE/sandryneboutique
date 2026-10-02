@@ -12,8 +12,9 @@ import {
   retryRetailSync,
   saveOrderTracking,
 } from "@/app/admin/actions";
-import { paidShippingCarrier } from "@/lib/shipping-services";
-import type { Order } from "@/lib/types";
+import { carrierAccountUrl, paidShippingCarrier, type PaidShippingCarrier } from "@/lib/shipping-services";
+import { STORE_CONTACT } from "@/lib/constants";
+import type { Order, ShippingAddress } from "@/lib/types";
 import {
   formatPrice,
   isOrderReturned,
@@ -35,13 +36,125 @@ function openShippingLabel(labelUrl: string) {
   window.open(blobUrl, "_blank", "noopener,noreferrer");
 }
 
-export function OrderTools({
-  order,
-  labelsEnabled,
+function shipToText(address: ShippingAddress): string {
+  return [
+    address.full_name,
+    address.line1,
+    address.line2,
+    `${address.city}, ${address.state} ${address.postal_code}`,
+    address.country,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function AccountLink({ carrier, hasTracking }: { carrier: PaidShippingCarrier; hasTracking: boolean }) {
+  const href = carrierAccountUrl(carrier, hasTracking);
+  const label = hasTracking
+    ? `Open ${carrier} and print this label`
+    : `Open ${carrier} and make the label`;
+  return (
+    <Button asChild className="rounded-none tracking-[0.12em] uppercase text-xs w-full h-auto py-3 whitespace-normal">
+      <a href={href} target="_blank" rel="noopener noreferrer">
+        {label}
+      </a>
+    </Button>
+  );
+}
+
+function LabelPrintHelp({
+  carrier,
+  serviceName,
+  trackingNumber,
+  heartlandSalesOrderId,
+  orderRef,
+  address,
+  onCopy,
 }: {
-  order: Order;
-  labelsEnabled: boolean;
+  carrier: PaidShippingCarrier | null;
+  serviceName: string;
+  trackingNumber?: string | null;
+  heartlandSalesOrderId?: number | null;
+  orderRef: string;
+  address: ShippingAddress;
+  onCopy: (value: string) => void;
 }) {
+  const tracking = trackingNumber?.trim() || "";
+  const addressText = shipToText(address);
+  const fromText = `Sandryne Boutique\n${STORE_CONTACT.addressLines.join("\n")}`;
+  const heartlandNumber = heartlandSalesOrderId != null ? String(heartlandSalesOrderId) : null;
+
+  return (
+    <div className="space-y-3 text-sm">
+      <p className="font-medium">{serviceName || (carrier ? carrier : "UPS or FedEx")}</p>
+      {carrier ? (
+        <AccountLink carrier={carrier} hasTracking={Boolean(tracking)} />
+      ) : (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Open the email for this order. It says UPS or FedEx. Click that button. Do not click both.
+          </p>
+          <AccountLink carrier="UPS" hasTracking={Boolean(tracking)} />
+          <AccountLink carrier="FedEx" hasTracking={Boolean(tracking)} />
+        </div>
+      )}
+
+      {tracking ? (
+        <div className="border border-foreground/15 p-3 space-y-2">
+          <p className="text-[11px] tracking-[0.14em] uppercase text-muted-foreground">Type this number</p>
+          <p className="font-mono text-base break-all">{tracking}</p>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onCopy(tracking)}
+            className="rounded-none tracking-[0.12em] uppercase text-xs"
+          >
+            Copy tracking number
+          </Button>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Log in. Open the list of shipments. Paste this number. Print that label.
+            {carrier === "FedEx" ? " On FedEx, the list is called Ship History." : " On UPS, the page is Shipping History."}
+          </p>
+        </div>
+      ) : (
+        <div className="border border-foreground/15 p-3 space-y-2">
+          <p className="font-medium">There is no number to search yet.</p>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            This package is not in UPS or FedEx until you make the label. Do not search. Log in, start a new shipment, and paste the address.
+          </p>
+          <p className="text-[11px] tracking-[0.14em] uppercase text-muted-foreground">Ship to</p>
+          <p className="whitespace-pre-line text-xs">{addressText}</p>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onCopy(addressText)}
+            className="rounded-none tracking-[0.12em] uppercase text-xs"
+          >
+            Copy ship-to address
+          </Button>
+          <p className="text-[11px] tracking-[0.14em] uppercase text-muted-foreground">Ship from</p>
+          <p className="whitespace-pre-line text-xs">{fromText}</p>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onCopy(fromText)}
+            className="rounded-none tracking-[0.12em] uppercase text-xs"
+          >
+            Copy ship-from address
+          </Button>
+        </div>
+      )}
+
+      <div className="text-xs text-muted-foreground leading-relaxed space-y-1">
+        <p>Do not type these. UPS and FedEx do not know them.</p>
+        {heartlandNumber ? <p className="font-mono text-foreground/80">Heartland {heartlandNumber}</p> : null}
+        <p className="font-mono break-all text-foreground/80">Order {orderRef}</p>
+      </div>
+    </div>
+  );
+}
+
+export function OrderTools({ order }: { order: Order }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const serviceName = order.shipping_service?.trim() || "";
@@ -245,48 +358,30 @@ export function OrderTools({
           Shipping
         </h3>
         <div className="space-y-2 max-h-[min(32rem,70vh)] overflow-y-auto pr-1">
-          <div className="space-y-1 text-sm">
-            <p className="font-medium">
-              {serviceName || (paidCarrier ? paidCarrier : "Carrier not saved")}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {paidCarrier
-                ? money.shipping === 0
-                  ? `Customer paid for ${paidCarrier}. Print that carrier only.`
-                  : `${formatPrice(money.shipping)} paid at checkout for ${paidCarrier}. Print that carrier only.`
-                : "The UPS or FedEx choice was not saved. Read the confirmation email before you buy a label."}
-            </p>
-            {hasTracking ? (
-              <p className="text-sm font-mono break-all pt-1">
-                {order.tracking_carrier || carrier ? `${order.tracking_carrier || carrier} · ` : ""}
-                {order.tracking_number ?? tracking}
-              </p>
-            ) : null}
-          </div>
+          <LabelPrintHelp
+            carrier={paidCarrier}
+            serviceName={serviceName}
+            trackingNumber={order.tracking_number}
+            heartlandSalesOrderId={order.heartland_sales_order_id}
+            orderRef={order.id}
+            address={order.shipping_address}
+            onCopy={(value) => {
+              void navigator.clipboard.writeText(value);
+              toast.success("Copied. Paste it on the UPS or FedEx page.");
+            }}
+          />
 
-          {labelsEnabled && (paidCarrier || hasLabel) ? (
-            (hasLabel || !refunded) && (
-              <Button
-                type="button"
-                disabled={pending && !hasLabel}
-                onClick={printLabel}
-                className="rounded-none tracking-[0.12em] uppercase text-xs w-full"
-              >
-                {hasLabel ? `Print ${paidCarrier || "saved"} label` : `Print ${serviceName || paidCarrier} label`}
-              </Button>
-            )
-          ) : labelsEnabled ? (
-            <p className="text-[11px] text-muted-foreground leading-relaxed">
-              No label button on this order — the carrier was not saved. Use the confirmation email, buy the UPS or FedEx label named there, then enter tracking below.
-            </p>
-          ) : (
-            <p className="text-[11px] text-muted-foreground leading-relaxed">
-              Add UPS and/or FedEx keys in Vercel to print labels here. FedEx needs{" "}
-              <code className="text-[10px]">FEDEX_API_KEY</code>,{" "}
-              <code className="text-[10px]">FEDEX_SECRET_KEY</code>, and{" "}
-              <code className="text-[10px]">FEDEX_ACCOUNT_NUMBER</code>.
-            </p>
-          )}
+          {hasLabel && !refunded ? (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending}
+              onClick={printLabel}
+              className="rounded-none tracking-[0.12em] uppercase text-xs w-full"
+            >
+              Or open the label already saved here
+            </Button>
+          ) : null}
 
           {!shipped && !refunded ? (
             <>
