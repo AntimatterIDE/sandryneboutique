@@ -80,9 +80,14 @@ export default function CurtainPreloader() {
       ))}
 
       <div className="absolute inset-0 flex items-center justify-center">
-        <span className="preloader-wordmark font-serif text-3xl sm:text-4xl uppercase tracking-[0.32em] text-background">
-          Sandryne
-        </span>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/brand/sandryne-white.png"
+          alt=""
+          width={1303}
+          height={419}
+          className="preloader-wordmark h-16 w-auto sm:h-20"
+        />
       </div>
     </div>
   );

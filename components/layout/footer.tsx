@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import {
   SITE_EMAIL,
@@ -49,7 +50,16 @@ export async function Footer() {
       <div className="mx-auto max-w-7xl px-6 py-16">
         <div className="grid gap-12 lg:grid-cols-12">
           <div className="lg:col-span-4 flex flex-col gap-5">
-            <p className="font-serif text-2xl tracking-[0.28em] uppercase">Sandryne</p>
+            <Link href="/" aria-label="Sandryne Boutique" className="w-fit">
+              <Image
+                src="/brand/sandryne-black.png"
+                alt="Sandryne Boutique"
+                width={1303}
+                height={419}
+                sizes="220px"
+                className="h-12 w-auto sm:h-14"
+              />
+            </Link>
             <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">
               Sandryne Boutique is a fashion-forward, elevated style destination for women, with an
               emphasis on minimalism, elegance, and visual storytelling.

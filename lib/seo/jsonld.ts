@@ -17,7 +17,7 @@ export function organizationJsonLd() {
     "@id": `${siteUrl}/#organization`,
     name: SITE_NAME,
     url: siteUrl,
-    logo: `${siteUrl}/icon-512.png`,
+    logo: `${siteUrl}/brand/sandryne-black.png`,
     sameAs: [SOCIAL_LINKS.instagram, SOCIAL_LINKS.tiktok],
     email: SITE_EMAIL,
     telephone: STORE_CONTACT.phoneDisplay,

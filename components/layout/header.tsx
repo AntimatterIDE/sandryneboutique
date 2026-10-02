@@ -74,11 +74,16 @@ export function Header({ menu = {} }: HeaderProps) {
               </button>
             </div>
 
-            <Link
-              href="/"
-              className="justify-self-center font-serif text-2xl sm:text-3xl tracking-[0.28em] uppercase whitespace-nowrap"
-            >
-              Sandryne
+            <Link href="/" aria-label="Sandryne Boutique" className="justify-self-center">
+              <Image
+                src="/brand/sandryne-black.png"
+                alt="Sandryne Boutique"
+                width={1303}
+                height={419}
+                sizes="160px"
+                priority
+                className="h-8 w-auto sm:h-10"
+              />
             </Link>
 
             <div className="justify-self-end flex items-center gap-1 sm:gap-3">

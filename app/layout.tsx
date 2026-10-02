@@ -63,12 +63,14 @@ export const metadata: Metadata = {
     type: "website",
     url: siteUrl,
     locale: "en_US",
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Sandryne Boutique" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "Sandryne Boutique — We Curate Elegance",
     description:
       "A curated luxury fashion boutique. Timeless silhouettes, modern minimalism, effortless elegance.",
+    images: ["/og.png"],
   },
   robots: {
     index: true,
