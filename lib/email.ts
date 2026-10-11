@@ -40,7 +40,9 @@ function escapeHtml(value: string): string {
 
 function orderStatusLabel(order: Order): string {
   if (order.refunded_at || order.status === "returned") return "Refunded";
-  if (order.return_requested_at && !order.return_received_at) return "Return requested";
+  if (order.return_requested_at && !order.return_received_at) {
+    return order.return_note?.trim() ? "Exchange requested" : "Return requested";
+  }
   if (order.return_received_at && !order.refunded_at) return "Return received — refund pending";
   if (order.status === "shipped") return "Shipped";
   if (order.status === "paid") return "Paid — preparing to ship";
@@ -183,6 +185,34 @@ export async function sendReturnRequestedEmails(order: Order): Promise<void> {
       `<p>${escapeHtml(order.shipping_address.full_name)} (${escapeHtml(order.email)}) requested a return.</p>
        <p>Order ${escapeHtml(order.id)}</p>
        <p>Refund the item price only: ${formatPrice(money.refundable)}. Checkout shipping is not refunded.</p>
+       <p><a href="${siteUrl()}/admin/orders">Open admin orders</a></p>`
+    )
+  );
+}
+
+export async function sendExchangeRequestedEmails(order: Order, note: string): Promise<void> {
+  const address = STORE_CONTACT.addressLines.map(escapeHtml).join("<br/>");
+  const wanted = escapeHtml(note.trim());
+  const customerHtml = layout(
+    "Exchange requested",
+    `
+      <p>We received your exchange request for order ${escapeHtml(order.id.slice(0, 8))}.</p>
+      <p>You asked for: <strong>${wanted}</strong></p>
+      <p>Please ship the unworn original item with tags attached via UPS or FedEx (not USPS) to:</p>
+      <p>${address}</p>
+      <p>Write your order reference on the label. You pay to ship the item back. We send the replacement after the original arrives.</p>
+    `
+  );
+  await send(order.email, `Exchange requested · ${SITE_NAME}`, customerHtml);
+  await send(
+    SITE_EMAIL,
+    `Exchange requested · ${order.email}`,
+    layout(
+      "Customer exchange request",
+      `<p>${escapeHtml(order.shipping_address.full_name)} (${escapeHtml(order.email)}) asked to exchange an item.</p>
+       <p>Order ${escapeHtml(order.id)}</p>
+       <p>They want: ${wanted}</p>
+       <p>Do not refund the card. Send the replacement after the original item arrives.</p>
        <p><a href="${siteUrl()}/admin/orders">Open admin orders</a></p>`
     )
   );

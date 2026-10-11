@@ -1083,6 +1083,35 @@ async function getSalesOrderBalance(orderId: number): Promise<number | null> {
   return null;
 }
 
+/**
+ * Heartland hides a sales order until it is Open, and Open requires a shipping
+ * method. Use a zero-price method so Heartland does not replace the shipping
+ * the customer already paid, then write that charge back in the same update.
+ */
+async function assignWebsiteShippingMethod(orderId: number, shippingCharge: number): Promise<void> {
+  const charge = roundMoney(shippingCharge);
+  let methodId: number | null = null;
+  try {
+    const { body } = await retailFetch("/shipping/methods?per_page=50");
+    const methods = (
+      (body as SearchResult<{ id: number; amount?: number | null; "active?"?: boolean }>).results ?? []
+    ).filter((method) => method["active?"] !== false && Number.isFinite(method.id));
+    const zeroCost = methods.find((method) => method.amount == null || Number(method.amount) === 0);
+    methodId = (zeroCost ?? methods[0])?.id ?? null;
+  } catch (err) {
+    console.warn("Heartland Retail shipping method lookup skipped:", err);
+  }
+  if (!methodId) return;
+  try {
+    await retailFetch(`/sales/orders/${orderId}`, {
+      method: "PUT",
+      body: JSON.stringify({ shipping_method_id: methodId, shipping_charge: charge }),
+    });
+  } catch (err) {
+    console.warn("Heartland Retail shipping method assignment skipped:", err);
+  }
+}
+
 export async function openSalesOrder(orderId: number): Promise<void> {
   await retailFetch(`/sales/orders/${orderId}`, {
     method: "PUT",
@@ -1803,6 +1832,7 @@ export async function syncPaidOrderToRetail(input: {
     await applyLineTaxesToExistingOrder(salesOrderId, input.lines, lineTaxes);
   }
 
+  await assignWebsiteShippingMethod(salesOrderId, shippingCharge);
   await setSalesOrderShippingCharge(salesOrderId, shippingCharge);
 
   const due = (await getSalesOrderBalance(salesOrderId)) ?? input.totalAmount;

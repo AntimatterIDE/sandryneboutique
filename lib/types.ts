@@ -159,6 +159,8 @@ export interface Order {
   inventory_restocked_at?: string | null;
   return_requested_at?: string | null;
   return_received_at?: string | null;
+  /** What the customer wants instead, when they asked for an exchange. */
+  return_note?: string | null;
   shipping_address: ShippingAddress;
   billing_address?: ShippingAddress | null;
   items: OrderItem[];

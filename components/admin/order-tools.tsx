@@ -243,11 +243,17 @@ export function OrderTools({ order }: { order: Order }) {
           <div className="space-y-2">
             {returnRequested ? (
               <p className="text-xs text-muted-foreground">
-                Customer requested a return
-                {order.return_requested_at
-                  ? ` on ${new Date(order.return_requested_at).toLocaleDateString()}`
-                  : ""}
-                . They pay to ship it back. Refund the item price only.
+                {order.return_note?.trim()
+                  ? `Customer asked to exchange this order${
+                      order.return_requested_at
+                        ? ` on ${new Date(order.return_requested_at).toLocaleDateString()}`
+                        : ""
+                    }. They want: ${order.return_note.trim()}. They ship the original back. Send the replacement after it arrives. Do not refund unless you cannot make the exchange.`
+                  : `Customer requested a return${
+                      order.return_requested_at
+                        ? ` on ${new Date(order.return_requested_at).toLocaleDateString()}`
+                        : ""
+                    }. They pay to ship it back. Refund the item price only.`}
               </p>
             ) : null}
             {returnRequested && !returnReceived ? (

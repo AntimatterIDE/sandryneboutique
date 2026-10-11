@@ -282,7 +282,7 @@ export default async function AdminOrdersPage({
                         >
                           Heartland Sales Orders
                         </a>
-                        . Filters: Any Status, All Location. Pending with invoiced qty 0 is still the order.
+                        . Status Open, All Location. Set the date range back to the order date, then search this number.
                       </p>
                       {order.heartland_sync_error ? (
                         <p className="text-[11px] text-destructive mt-1 leading-relaxed break-words">

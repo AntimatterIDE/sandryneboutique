@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { requestOrderReturn } from "@/app/(store)/account/actions";
+import { Textarea } from "@/components/ui/textarea";
+import { requestOrderExchange, requestOrderReturn } from "@/app/(store)/account/actions";
 import { orderTrackingUrl } from "@/lib/tracking";
 import type { Order } from "@/lib/types";
 import {
@@ -21,7 +22,9 @@ import {
 function statusLabel(order: Order): string {
   if (isOrderReturned(order)) return "Refunded";
   if (order.return_received_at) return "Return received";
-  if (order.return_requested_at) return "Return requested";
+  if (order.return_requested_at) {
+    return order.return_note?.trim() ? "Exchange requested" : "Return requested";
+  }
   if (order.status === "shipped") return "Shipped";
   if (order.status === "paid") return "Paid";
   if (order.status === "cancelled") return "Cancelled";
@@ -32,6 +35,8 @@ function statusLabel(order: Order): string {
 export function AccountOrderCard({ order }: { order: Order }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [exchangeOpen, setExchangeOpen] = useState(false);
+  const [exchangeNote, setExchangeNote] = useState("");
   const money = orderMoneyBreakdown(order);
   const refund = orderRefundBreakdown(order);
   const finalSaleOnly = orderIsFinalSaleOnly(order);
@@ -130,39 +135,94 @@ export function AccountOrderCard({ order }: { order: Order }) {
         </p>
       ) : order.return_requested_at ? (
         <p className="text-xs text-muted-foreground">
-          Return requested
+          {order.return_note?.trim()
+            ? `Exchange requested — you asked for ${order.return_note.trim()}. `
+            : "Return requested. "}
           {order.return_received_at
-            ? " — we received your package and will refund your card (shipping not included)."
-            : " — ship the item back with your order reference. You pay postage. We refund the item price only after it arrives."}
+            ? order.return_note?.trim()
+              ? "We received the original and will send the replacement."
+              : "We received your package and will refund your card (shipping not included)."
+            : "Ship the item back with your order reference. You pay postage."}
         </p>
       ) : finalSaleOnly && !isOrderReturned(order) ? (
         <p className="text-xs text-muted-foreground">
-          This order is final sale and cannot be returned.
+          This order is final sale and cannot be returned or exchanged.
         </p>
       ) : canRequestReturn ? (
-        <Button
-          type="button"
-          variant="outline"
-          disabled={pending}
-          onClick={() => {
-            if (
-              !confirm(
-                `Request a return? You pay to ship the item back. We refund the item price only (${formatPrice(refund.refundable)}). Checkout shipping is not refunded. Sale items are final sale.`
-              )
-            ) {
-              return;
-            }
-            startTransition(async () => {
-              const result = await requestOrderReturn(order.id);
-              if (result.ok) toast.success(result.message);
-              else toast.error(result.message);
-              router.refresh();
-            });
-          }}
-          className="rounded-none tracking-[0.12em] uppercase text-xs"
-        >
-          Request return
-        </Button>
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending}
+              onClick={() => {
+                if (
+                  !confirm(
+                    `Request a return? You pay to ship the item back. We refund the item price only (${formatPrice(refund.refundable)}). Checkout shipping is not refunded. Sale items are final sale.`
+                  )
+                ) {
+                  return;
+                }
+                startTransition(async () => {
+                  const result = await requestOrderReturn(order.id);
+                  if (result.ok) toast.success(result.message);
+                  else toast.error(result.message);
+                  router.refresh();
+                });
+              }}
+              className="rounded-none tracking-[0.12em] uppercase text-xs"
+            >
+              Request return
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending}
+              onClick={() => setExchangeOpen((open) => !open)}
+              className="rounded-none tracking-[0.12em] uppercase text-xs"
+            >
+              Request exchange
+            </Button>
+          </div>
+          {exchangeOpen ? (
+            <form
+              className="space-y-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                startTransition(async () => {
+                  const result = await requestOrderExchange(order.id, exchangeNote);
+                  if (result.ok) {
+                    toast.success(result.message);
+                    setExchangeOpen(false);
+                  } else {
+                    toast.error(result.message);
+                  }
+                  router.refresh();
+                });
+              }}
+            >
+              <label className="block text-xs text-muted-foreground" htmlFor={`exchange-${order.id}`}>
+                Size, color, or item you want instead
+              </label>
+              <Textarea
+                id={`exchange-${order.id}`}
+                value={exchangeNote}
+                onChange={(event) => setExchangeNote(event.target.value)}
+                maxLength={400}
+                required
+                placeholder="Example: same top in a medium"
+                className="rounded-none"
+              />
+              <Button
+                type="submit"
+                disabled={pending || exchangeNote.trim().length < 3}
+                className="rounded-none tracking-[0.12em] uppercase text-xs"
+              >
+                Send exchange request
+              </Button>
+            </form>
+          ) : null}
+        </div>
       ) : null}
     </article>
   );
