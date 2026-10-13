@@ -732,6 +732,7 @@ export async function deletePost(id: string): Promise<ActionResult> {
 export interface HomepageSectionInput {
   title: string;
   subtitle: string;
+  body?: string;
   cta_label: string;
   cta_href: string;
   product_ids: string[];
@@ -759,7 +760,7 @@ function validateHomepageSection(id: string, input: HomepageSectionInput): strin
   if (input.image_url?.trim() && !isValidHomepageImageUrl(input.image_url.trim())) {
     return "Hero image must be a site path or an http(s) URL.";
   }
-  if (id === "hero" || id.startsWith("category_tile_")) return null;
+  if (id === "hero" || id === "category_intro" || id.startsWith("category_tile_")) return null;
   if (!Number.isInteger(input.max_items) || input.max_items < 1 || input.max_items > 24) {
     return "Max products must be between 1 and 24.";
   }
@@ -782,28 +783,61 @@ export async function updateHomepageSection(
   const supabase = await createPrivilegedClient();
   const isHero = id === "hero";
   const isCategoryTile = id.startsWith("category_tile_");
+  const isCategoryIntro = id === "category_intro";
   const tileSlot = CATEGORY_TILE_SLOTS.find((slot) => slot.id === id);
   const fields = {
     title: input.title.trim(),
     subtitle: input.subtitle.trim(),
+    body: input.body?.trim() ?? "",
     cta_label: input.cta_label.trim(),
     cta_href: input.cta_href.trim(),
-    product_ids: isHero ? [] : input.product_ids,
-    max_items: isHero ? 8 : isCategoryTile ? 1 : input.max_items,
+    product_ids: isHero || isCategoryIntro ? [] : input.product_ids,
+    max_items: isHero ? 8 : isCategoryTile || isCategoryIntro ? 1 : input.max_items,
     enabled: input.enabled,
     updated_at: new Date().toISOString(),
   };
 
-  const { error } =
-    isHero || isCategoryTile
-      ? await supabase.from("homepage_sections").upsert({
+  const upsert =
+    isHero || isCategoryTile || isCategoryIntro
+      ? {
           id,
-          label: isHero ? "Hero" : `Category tile — ${tileSlot?.label ?? "Category"}`,
-          sort_order: isHero ? 0 : tileSlot ? CATEGORY_TILE_SLOTS.indexOf(tileSlot) + 3 : 5,
+          label: isHero
+            ? "Hero"
+            : isCategoryIntro
+              ? "Shop by category"
+              : `Category tile — ${tileSlot?.label ?? "Category"}`,
+          sort_order: isHero ? 0 : isCategoryIntro ? 2 : tileSlot ? CATEGORY_TILE_SLOTS.indexOf(tileSlot) + 3 : 5,
           image_url: input.image_url?.trim() || null,
           ...fields,
-        })
-      : await supabase.from("homepage_sections").update(fields).eq("id", id);
+        }
+      : null;
+
+  const write = async (payload: Record<string, unknown>, inserting: boolean) =>
+    inserting
+      ? supabase.from("homepage_sections").upsert(payload)
+      : supabase.from("homepage_sections").update(payload).eq("id", id);
+
+  let { error } = upsert
+    ? await write(upsert, true)
+    : await write(fields, false);
+
+  if (error && /body/i.test(`${error.message ?? ""} ${error.details ?? ""}`)) {
+    const { body: _body, ...withoutBody } = (upsert ?? fields) as Record<string, unknown> & {
+      body?: string;
+    };
+    ({ error } = upsert
+      ? await write(withoutBody, true)
+      : await write(withoutBody, false));
+    if (!error) {
+      revalidatePath("/");
+      revalidatePath("/admin/homepage");
+      return {
+        ok: false,
+        message:
+          "The headline saved, but the paragraph needs supabase/migrations/019_homepage_copy.sql in Supabase.",
+      };
+    }
+  }
 
   if (error) {
     console.error("Homepage section update failed:", error);

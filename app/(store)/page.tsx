@@ -62,6 +62,7 @@ export const metadata: Metadata = {
 export default async function HomePage() {
   const sections = await getHomepageSections();
   const hero = sections.find((s) => s.id === "hero");
+  const categoryIntro = sections.find((s) => s.id === "category_intro");
   const carousel = sections.find((s) => s.id === "featured_carousel");
   const arrivals = sections.find((s) => s.id === "new_arrivals");
 
@@ -77,11 +78,17 @@ export default async function HomePage() {
         imageUrl={hero?.image_url}
         title={hero?.title}
         subtitle={hero?.subtitle}
+        body={hero?.body}
         ctaLabel={hero?.cta_label}
         ctaHref={hero?.cta_href}
       />
       <TaglineMarquee />
-      <CategoryShowcase tiles={categoryTiles} />
+      <CategoryShowcase
+        tiles={categoryTiles}
+        eyebrow={categoryIntro?.enabled === false ? "" : categoryIntro?.title}
+        intro={categoryIntro?.enabled === false ? "" : categoryIntro?.body}
+        showIntro={categoryIntro?.enabled !== false}
+      />
 
       {carousel?.enabled && carouselProducts.length > 0 && (
         <LazySection minHeight="540px" rootMargin="80px" className="below-fold-section">

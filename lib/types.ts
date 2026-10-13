@@ -96,6 +96,8 @@ export interface HomepageSection {
   enabled: boolean;
   sort_order: number;
   image_url: string;
+  /** Longer copy: hero paragraph, category intro, and other seasonal text. */
+  body?: string;
   updated_at: string;
 }
 

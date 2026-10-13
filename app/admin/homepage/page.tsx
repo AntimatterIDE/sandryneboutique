@@ -29,15 +29,15 @@ export default async function AdminHomepagePage() {
       <header>
         <h1 className="font-serif text-3xl tracking-tight">Homepage</h1>
         <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
-          Change the homepage hero photo, the three category tiles, then curate
-          the featured carousel and new-arrivals grid. Empty product lists
-          auto-fill from the catalog.
+          Change the seasonal lines here: the hero headline and paragraph, the
+          category sentence, and the heading above the product row. Product
+          photos and picks are on the same page.
         </p>
       </header>
 
       <div className="space-y-6">
         {sections
-          .filter((section) => section.id === "hero")
+          .filter((section) => section.id === "hero" || section.id === "category_intro")
           .map((section) => (
             <HomepageSectionForm key={section.id} section={section} products={products} />
           ))}
@@ -46,7 +46,12 @@ export default async function AdminHomepagePage() {
           products={products}
         />
         {sections
-          .filter((section) => !section.id.startsWith("category_tile_") && section.id !== "hero")
+          .filter(
+            (section) =>
+              !section.id.startsWith("category_tile_") &&
+              section.id !== "hero" &&
+              section.id !== "category_intro"
+          )
           .map((section) => (
             <HomepageSectionForm key={section.id} section={section} products={products} />
           ))}

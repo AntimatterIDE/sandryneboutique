@@ -9,6 +9,7 @@ interface Hero1Props {
   imageUrl?: string | null;
   title?: string | null;
   subtitle?: string | null;
+  body?: string | null;
   ctaLabel?: string | null;
   ctaHref?: string | null;
 }
@@ -19,11 +20,14 @@ function splitHeroTitle(title: string): { lead: string; rest: string | null } {
   return { lead: title.slice(0, comma + 1), rest: title.slice(comma + 1).trim() };
 }
 
-export function Hero1({ imageUrl, title, subtitle, ctaLabel, ctaHref }: Hero1Props) {
+export function Hero1({ imageUrl, title, subtitle, body, ctaLabel, ctaHref }: Hero1Props) {
   const src = imageUrl?.trim() || DEFAULT_HERO_IMAGE;
   const heading = title?.trim() || "Summer, Elevated.";
   const { lead, rest } = splitHeroTitle(heading);
   const eyebrow = subtitle?.trim() || "The Summer '26 Edit";
+  const paragraph =
+    body?.trim() ||
+    "Silk dresses, elevated essentials, and gold vermeil jewelry — curated in limited runs for women who dress with intention. New pieces land weekly, and the best sell out first.";
   const primaryLabel = ctaLabel?.trim() || "Explore Summer Collection";
   const primaryHref = ctaHref?.trim() || "/shop?category=new-arrivals";
   return (
@@ -54,9 +58,7 @@ export function Hero1({ imageUrl, title, subtitle, ctaLabel, ctaHref }: Hero1Pro
             </h1>
 
             <p className="hero-fade-up text-base sm:text-lg text-muted-foreground leading-relaxed max-w-lg">
-              Silk dresses, elevated essentials, and gold vermeil jewelry —
-              curated in limited runs for women who dress with intention.
-              New pieces land weekly, and the best sell out first.
+              {paragraph}
             </p>
 
             <div className="hero-fade-up hero-delay-3 flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4">

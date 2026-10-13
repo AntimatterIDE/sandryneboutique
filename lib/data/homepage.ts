@@ -28,6 +28,22 @@ const DEFAULT_SECTIONS: HomepageSection[] = [
     enabled: true,
     sort_order: 0,
     image_url: DEFAULT_HERO_IMAGE,
+    body: "Silk dresses, elevated essentials, and gold vermeil jewelry — curated in limited runs for women who dress with intention. New pieces land weekly, and the best sell out first.",
+    updated_at: new Date(0).toISOString(),
+  },
+  {
+    id: "category_intro",
+    label: "Shop by category",
+    title: "Shop by Category",
+    subtitle: "",
+    cta_label: "Shop now",
+    cta_href: "/shop",
+    product_ids: [],
+    max_items: 1,
+    enabled: true,
+    sort_order: 2,
+    image_url: "",
+    body: "Tailored bottoms, fluid dresses, and crisp tops — every piece chosen to live together, effortlessly.",
     updated_at: new Date(0).toISOString(),
   },
   {
@@ -42,6 +58,7 @@ const DEFAULT_SECTIONS: HomepageSection[] = [
     enabled: true,
     sort_order: 10,
     image_url: "",
+    body: "",
     updated_at: new Date(0).toISOString(),
   },
   {
@@ -56,6 +73,7 @@ const DEFAULT_SECTIONS: HomepageSection[] = [
     enabled: true,
     sort_order: 20,
     image_url: "",
+    body: "",
     updated_at: new Date(0).toISOString(),
   },
   ...CATEGORY_TILE_SLOTS.map((slot, index) => ({
@@ -70,6 +88,7 @@ const DEFAULT_SECTIONS: HomepageSection[] = [
     enabled: true,
     sort_order: 3 + index,
     image_url: "",
+    body: "",
     updated_at: new Date(0).toISOString(),
   })),
 ];
@@ -79,6 +98,7 @@ function normalizeSection(row: HomepageSection): HomepageSection {
     ...row,
     product_ids: Array.isArray(row.product_ids) ? row.product_ids : [],
     image_url: typeof row.image_url === "string" ? row.image_url : "",
+    body: typeof row.body === "string" ? row.body : "",
   };
 }
 

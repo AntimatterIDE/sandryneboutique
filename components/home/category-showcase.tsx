@@ -4,45 +4,47 @@ import type { CategoryShowcaseTile } from "@/lib/data/homepage";
 
 interface CategoryShowcaseProps {
   tiles: CategoryShowcaseTile[];
+  eyebrow?: string;
+  intro?: string;
+  showIntro?: boolean;
 }
 
-export function CategoryShowcase({ tiles }: CategoryShowcaseProps) {
-  const bySlug = new Map(tiles.map((tile) => [tile.slug, tile]));
-  const bottoms = bySlug.get("bottoms");
-  const dresses = bySlug.get("dresses");
-  const tops = bySlug.get("tops");
+function withCategoryLinks(text: string, tiles: CategoryShowcaseTile[]) {
+  const byWord = new Map(tiles.map((tile) => [tile.slug, tile]));
+  const parts = text.split(/\b(bottoms|dresses|tops)\b/i);
+  return parts.map((part, index) => {
+    const tile = byWord.get(part.toLowerCase() as CategoryShowcaseTile["slug"]);
+    if (!tile) return <span key={index}>{part}</span>;
+    return (
+      <Link
+        key={index}
+        href={tile.href}
+        className="italic underline decoration-1 underline-offset-8 decoration-foreground/30 hover:decoration-foreground transition-colors"
+      >
+        {part}
+      </Link>
+    );
+  });
+}
+
+export function CategoryShowcase({ tiles, eyebrow, intro, showIntro = true }: CategoryShowcaseProps) {
+  const heading = eyebrow?.trim() || "Shop by Category";
+  const sentence =
+    intro?.trim() ||
+    "Tailored bottoms, fluid dresses, and crisp tops — every piece chosen to live together, effortlessly.";
 
   return (
     <section className="mx-auto max-w-7xl px-4 sm:px-6 py-20 sm:py-28 below-fold-section">
+      {showIntro && (
       <div className="mb-12 sm:mb-16 max-w-3xl">
         <h2 className="text-[11px] tracking-[0.24em] uppercase text-muted-foreground mb-5">
-          Shop by Category
+          {heading}
         </h2>
         <p className="font-serif text-3xl sm:text-5xl leading-[1.15] tracking-tight">
-          Tailored{" "}
-          <Link
-            href={bottoms?.href ?? "/shop?category=bottoms"}
-            className="italic underline decoration-1 underline-offset-8 decoration-foreground/30 hover:decoration-foreground transition-colors"
-          >
-            bottoms
-          </Link>
-          , fluid{" "}
-          <Link
-            href={dresses?.href ?? "/shop?category=dresses"}
-            className="italic underline decoration-1 underline-offset-8 decoration-foreground/30 hover:decoration-foreground transition-colors"
-          >
-            dresses
-          </Link>
-          , and crisp{" "}
-          <Link
-            href={tops?.href ?? "/shop?category=tops"}
-            className="italic underline decoration-1 underline-offset-8 decoration-foreground/30 hover:decoration-foreground transition-colors"
-          >
-            tops
-          </Link>{" "}
-          — every piece chosen to live together, effortlessly.
+          {withCategoryLinks(sentence, tiles)}
         </p>
       </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6">
         {tiles.map((tile) => (

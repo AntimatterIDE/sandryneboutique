@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { HeroImageField } from "@/components/admin/hero-image-field";
 import type { HomepageSection, Product } from "@/lib/types";
 import { formatPrice, effectivePrice } from "@/lib/types";
@@ -32,8 +33,19 @@ export function HomepageSectionForm({ section, products }: HomepageSectionFormPr
   const [enabled, setEnabled] = useState(section.enabled);
   const [productIds, setProductIds] = useState<string[]>(section.product_ids);
   const [imageUrl, setImageUrl] = useState(section.image_url ?? "");
+  const [body, setBody] = useState(section.body ?? "");
   const [query, setQuery] = useState("");
   const isHero = section.id === "hero";
+  const isCopyOnly = section.id === "category_intro";
+  const showsProducts = !isHero && !isCopyOnly;
+  const titleLabel = isHero ? "Headline" : isCopyOnly ? "Small heading" : "Heading";
+  const titleHint = isHero
+    ? "The large line at the top of the homepage. Change it each season."
+    : section.id === "featured_carousel"
+      ? "The large seasonal line above the scrolling products. Change it each season."
+      : section.id === "new_arrivals"
+        ? "The heading above the product grid."
+        : "The small label above the category sentence.";
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -77,10 +89,11 @@ export function HomepageSectionForm({ section, products }: HomepageSectionFormPr
     const input: HomepageSectionInput = {
       title,
       subtitle,
+      body,
       cta_label: ctaLabel,
       cta_href: ctaHref,
-      product_ids: isHero ? [] : productIds,
-      max_items: isHero ? 8 : maxItems,
+      product_ids: showsProducts ? productIds : [],
+      max_items: showsProducts ? maxItems : 1,
       enabled,
       image_url: imageUrl,
     };
@@ -99,7 +112,8 @@ export function HomepageSectionForm({ section, products }: HomepageSectionFormPr
           <p className="text-[11px] tracking-[0.2em] uppercase text-muted-foreground">
             {section.label}
           </p>
-          <h2 className="font-serif text-2xl tracking-tight mt-1">{section.title}</h2>
+          <h2 className="font-serif text-2xl tracking-tight mt-1">{title || section.label}</h2>
+          <p className="text-sm text-muted-foreground mt-2 max-w-xl">{titleHint}</p>
         </div>
         {!isHero && (
           <label className="flex items-center gap-3 text-sm">
@@ -110,8 +124,8 @@ export function HomepageSectionForm({ section, products }: HomepageSectionFormPr
       </header>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor={`${section.id}-title`}>Title</Label>
+        <div className="space-y-2 sm:col-span-2">
+          <Label htmlFor={`${section.id}-title`}>{titleLabel}</Label>
           <Input
             id={`${section.id}-title`}
             value={title}
@@ -119,35 +133,43 @@ export function HomepageSectionForm({ section, products }: HomepageSectionFormPr
             className="rounded-none"
           />
         </div>
-        <div className="space-y-2">
-          <Label htmlFor={`${section.id}-subtitle`}>Eyebrow / subtitle</Label>
-          <Input
-            id={`${section.id}-subtitle`}
-            value={subtitle}
-            onChange={(e) => setSubtitle(e.target.value)}
-            className="rounded-none"
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor={`${section.id}-cta-label`}>CTA label</Label>
-          <Input
-            id={`${section.id}-cta-label`}
-            value={ctaLabel}
-            onChange={(e) => setCtaLabel(e.target.value)}
-            className="rounded-none"
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor={`${section.id}-cta-href`}>CTA link</Label>
-          <Input
-            id={`${section.id}-cta-href`}
-            value={ctaHref}
-            onChange={(e) => setCtaHref(e.target.value)}
-            className="rounded-none font-mono text-sm"
-            placeholder="/shop?category=tops"
-          />
-        </div>
-        {!isHero && (
+        {(isHero || showsProducts) && (
+          <div className="space-y-2">
+            <Label htmlFor={`${section.id}-subtitle`}>
+              {isHero ? "Line beside the headline" : "Small line above the heading"}
+            </Label>
+            <Input
+              id={`${section.id}-subtitle`}
+              value={subtitle}
+              onChange={(e) => setSubtitle(e.target.value)}
+              className="rounded-none"
+            />
+          </div>
+        )}
+        {(isHero || showsProducts) && (
+          <>
+            <div className="space-y-2">
+              <Label htmlFor={`${section.id}-cta-label`}>Button label</Label>
+              <Input
+                id={`${section.id}-cta-label`}
+                value={ctaLabel}
+                onChange={(e) => setCtaLabel(e.target.value)}
+                className="rounded-none"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor={`${section.id}-cta-href`}>Button link</Label>
+              <Input
+                id={`${section.id}-cta-href`}
+                value={ctaHref}
+                onChange={(e) => setCtaHref(e.target.value)}
+                className="rounded-none font-mono text-sm"
+                placeholder="/shop?category=tops"
+              />
+            </div>
+          </>
+        )}
+        {showsProducts && (
           <div className="space-y-2">
             <Label htmlFor={`${section.id}-max`}>Max products</Label>
             <Input
@@ -163,6 +185,26 @@ export function HomepageSectionForm({ section, products }: HomepageSectionFormPr
         )}
       </div>
 
+      {(isHero || isCopyOnly) && (
+        <div className="space-y-2">
+          <Label htmlFor={`${section.id}-body`}>
+            {isHero ? "Paragraph under the headline" : "Sentence"}
+          </Label>
+          <p className="text-xs text-muted-foreground">
+            {isCopyOnly
+              ? "The words bottoms, dresses, and tops stay linked to those shops."
+              : "The paragraph under the headline. Rewrite it when the season changes."}
+          </p>
+          <Textarea
+            id={`${section.id}-body`}
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={4}
+            className="rounded-none min-h-28"
+          />
+        </div>
+      )}
+
       {isHero && (
         <div className="space-y-2">
           <Label>Hero image</Label>
@@ -174,7 +216,7 @@ export function HomepageSectionForm({ section, products }: HomepageSectionFormPr
         </div>
       )}
 
-      {!isHero && (
+      {showsProducts && (
       <div className="space-y-3">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -302,6 +344,8 @@ export function HomepageSectionForm({ section, products }: HomepageSectionFormPr
             <Loader2 className="size-4 animate-spin" />
           ) : isHero ? (
             "Save hero"
+          ) : isCopyOnly ? (
+            "Save category text"
           ) : (
             "Save section"
           )}
