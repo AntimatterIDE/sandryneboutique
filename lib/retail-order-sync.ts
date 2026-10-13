@@ -99,6 +99,13 @@ export async function syncWebsiteOrderToRetail(
         heartland_sync_error: null,
       })
       .eq("id", order.id);
+    if (retail.invoiceId) {
+      await admin
+        .from("orders")
+        .update({ status: "fulfilled" })
+        .eq("id", order.id)
+        .in("status", ["paid", "pending"]);
+    }
 
     return { ok: true, salesOrderId: retail.salesOrderId };
   } catch (err) {

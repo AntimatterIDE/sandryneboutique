@@ -73,7 +73,7 @@ export default async function AdminCustomersPage() {
     };
     if (row.name === "—" && name) row.name = name;
     row.orders += 1;
-    if (order.status === "paid" || order.status === "shipped") {
+    if (order.status === "paid" || order.status === "fulfilled" || order.status === "shipped") {
       row.total += Number(order.total_amount);
     }
     byEmail.set(email, row);

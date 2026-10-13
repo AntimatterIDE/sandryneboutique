@@ -99,11 +99,12 @@ export interface HomepageSection {
   updated_at: string;
 }
 
-export type OrderStatus = "pending" | "paid" | "shipped" | "cancelled" | "returned";
+export type OrderStatus = "pending" | "paid" | "fulfilled" | "shipped" | "cancelled" | "returned";
 
 export const ORDER_STATUSES: OrderStatus[] = [
   "pending",
   "paid",
+  "fulfilled",
   "shipped",
   "cancelled",
   "returned",

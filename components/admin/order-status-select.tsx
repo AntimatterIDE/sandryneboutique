@@ -16,6 +16,7 @@ import type { OrderStatus } from "@/lib/types";
 const STATUSES: { value: OrderStatus; label: string }[] = [
   { value: "pending", label: "Pending" },
   { value: "paid", label: "Paid" },
+  { value: "fulfilled", label: "Fulfilled" },
   { value: "shipped", label: "Shipped" },
   { value: "cancelled", label: "Cancelled" },
   { value: "returned", label: "Returned" },

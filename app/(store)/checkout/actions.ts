@@ -172,7 +172,7 @@ async function findRecentDuplicateOrder(
     .ilike("email", email.trim())
     .eq("total_amount", total)
     .gte("created_at", since)
-    .in("status", ["paid", "shipped"]);
+    .in("status", ["paid", "fulfilled", "shipped"]);
   const wanted = cartFingerprint(items);
   const match = (data ?? []).find((row) => {
     const existing = (row.items ?? []) as OrderItem[];
@@ -591,6 +591,7 @@ export async function processCheckout(input: CheckoutInput): Promise<CheckoutRes
           heartland_sales_order_id: retail.salesOrderId,
           heartland_sync_status: "synced",
           heartland_sync_error: null,
+          ...(retail.invoiceId ? { status: "fulfilled" } : {}),
         })
         .eq("id", order.id);
     } catch (err) {

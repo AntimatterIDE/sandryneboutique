@@ -35,7 +35,7 @@ export default async function AdminCustomerDetailPage({
 
   const name = profile?.full_name || orders[0]?.shipping_address.full_name || email;
   const ltv = orders
-    .filter((order) => order.status === "paid" || order.status === "shipped")
+    .filter((order) => order.status === "paid" || order.status === "fulfilled" || order.status === "shipped")
     .reduce((sum, order) => sum + Number(order.total_amount), 0);
 
   return (

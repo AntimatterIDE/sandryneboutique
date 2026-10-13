@@ -10,6 +10,7 @@ const STATUS_FILTERS = [
   { value: "all", label: "All" },
   { value: "pending", label: "Pending" },
   { value: "paid", label: "Paid" },
+  { value: "fulfilled", label: "Fulfilled" },
   { value: "shipped", label: "Shipped" },
   { value: "cancelled", label: "Cancelled" },
   { value: "returned", label: "Returned" },

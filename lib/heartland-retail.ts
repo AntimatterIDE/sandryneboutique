@@ -563,12 +563,27 @@ export async function upsertCustomerByEmail(input: {
   email: string;
   fullName: string;
 }): Promise<number> {
-  const existing = await findCustomerByEmail(input.email);
-  if (existing) return existing.id;
-
   const parts = input.fullName.trim().split(/\s+/);
   const first_name = parts[0] || "Customer";
   const last_name = parts.slice(1).join(" ") || "Web";
+  const existing = await findCustomerByEmail(input.email);
+  if (existing) {
+    const last = (existing.last_name ?? "").trim();
+    const first = (existing.first_name ?? "").trim();
+    const placeholder = !last || last.toLowerCase() === "web" || first.length < first_name.length;
+    if (placeholder && (first !== first_name || last !== last_name)) {
+      try {
+        await retailFetch(`/customers/${existing.id}`, {
+          method: "PUT",
+          body: JSON.stringify({ first_name, last_name }),
+        });
+      } catch (err) {
+        console.warn("Heartland Retail customer name update skipped:", err);
+      }
+    }
+    return existing.id;
+  }
+
   return createCustomer({
     first_name,
     last_name,
@@ -1141,6 +1156,53 @@ export async function completeInvoice(invoiceId: number): Promise<void> {
     method: "PUT",
     body: JSON.stringify({ status: "complete" }),
   });
+}
+
+/** Copy the still-open sales-order lines onto an invoice, then complete it. */
+async function invoiceSalesOrder(
+  orderId: number,
+  stationId: number,
+  locationId: number
+): Promise<number> {
+  const invoiceId = await createInvoice({
+    order_id: orderId,
+    station_id: stationId,
+    source_location_id: locationId,
+  });
+  try {
+    const { body } = await retailFetch(`/sales/orders/${orderId}/lines?per_page=50`);
+    const lines =
+      (
+        body as SearchResult<{
+          id: number;
+          item_id?: number;
+          qty?: number;
+          qty_open?: number;
+          unit_price?: number;
+        }>
+      ).results ?? [];
+    for (const line of lines) {
+      if (!line.item_id || Number(line.qty_open ?? line.qty ?? 0) <= 0) continue;
+      await retailFetch(`/sales/invoices/${invoiceId}/lines`, {
+        method: "POST",
+        body: JSON.stringify({
+          type: "ItemLine",
+          item_id: line.item_id,
+          qty: line.qty,
+          order_line_id: line.id,
+          ...(line.unit_price != null ? { adjusted_unit_price: line.unit_price } : {}),
+        }),
+      });
+    }
+  } catch (err) {
+    console.warn("Heartland Retail invoice lines skipped:", err);
+  }
+  try {
+    await completeInvoice(invoiceId);
+  } catch (err) {
+    console.warn("Heartland Retail invoice complete step:", err);
+  }
+  return invoiceId;
 }
 
 export async function voidSalesOrder(orderId: number): Promise<void> {
@@ -1853,34 +1915,14 @@ export async function syncPaidOrderToRetail(input: {
     await openSalesOrder(salesOrderId);
   } catch (openErr) {
     try {
-      const invoiceId = await createInvoice({
-        order_id: salesOrderId,
-        station_id: stationId,
-        source_location_id: locationId,
-      });
-      try {
-        await completeInvoice(invoiceId);
-      } catch (err) {
-        console.warn("Heartland Retail invoice complete step:", err);
-      }
+      const invoiceId = await invoiceSalesOrder(salesOrderId, stationId, locationId);
       return { salesOrderId, invoiceId };
     } catch {
       throw openErr;
     }
   }
 
-  const invoiceId = await createInvoice({
-    order_id: salesOrderId,
-    station_id: stationId,
-    source_location_id: locationId,
-  });
-
-  try {
-    await completeInvoice(invoiceId);
-  } catch (err) {
-    // Some accounts auto-complete on create; log and continue.
-    console.warn("Heartland Retail invoice complete step:", err);
-  }
+  const invoiceId = await invoiceSalesOrder(salesOrderId, stationId, locationId);
 
   return { salesOrderId, invoiceId };
 }

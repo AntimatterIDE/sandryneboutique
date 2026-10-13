@@ -37,6 +37,8 @@ export default async function AdminOrdersPage({
       query = query.in("status", ["returned", "cancelled"]);
     } else if (activeFilter === "cancelled") {
       query = query.eq("status", "cancelled");
+    } else if (activeFilter === "fulfilled") {
+      query = query.in("status", ["fulfilled", "shipped"]);
     } else if (activeFilter !== "all") {
       query = query.eq("status", activeFilter);
     }
@@ -282,7 +284,7 @@ export default async function AdminOrdersPage({
                         >
                           Heartland Sales Orders
                         </a>
-                        . Status Open, All Location. Set the date range back to the order date, then search this number.
+                        . Status Any or Closed, All Location. Search this number. The customer is the buyer’s name. Invoiced qty should be 1. A return is done on that completed sale.
                       </p>
                       {order.heartland_sync_error ? (
                         <p className="text-[11px] text-destructive mt-1 leading-relaxed break-words">

@@ -26,6 +26,7 @@ function statusLabel(order: Order): string {
     return order.return_note?.trim() ? "Exchange requested" : "Return requested";
   }
   if (order.status === "shipped") return "Shipped";
+  if (order.status === "fulfilled") return "Fulfilled";
   if (order.status === "paid") return "Paid";
   if (order.status === "cancelled") return "Cancelled";
   if (order.status === "pending") return "Pending";
@@ -44,7 +45,7 @@ export function AccountOrderCard({ order }: { order: Order }) {
     !isOrderReturned(order) &&
     !order.return_requested_at &&
     !finalSaleOnly &&
-    (order.status === "paid" || order.status === "shipped");
+    (order.status === "paid" || order.status === "fulfilled" || order.status === "shipped");
   const trackingUrl = orderTrackingUrl(order);
 
   return (

@@ -45,6 +45,7 @@ function orderStatusLabel(order: Order): string {
   }
   if (order.return_received_at && !order.refunded_at) return "Return received — refund pending";
   if (order.status === "shipped") return "Shipped";
+  if (order.status === "fulfilled") return "Fulfilled";
   if (order.status === "paid") return "Paid — preparing to ship";
   if (order.status === "cancelled") return "Cancelled";
   if (order.status === "pending") return "Pending";

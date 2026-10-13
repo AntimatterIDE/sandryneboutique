@@ -31,7 +31,7 @@ async function loadReturnableOrder(
   if (order.return_requested_at) {
     return { ok: false, message: "A return or exchange is already in progress for this order." };
   }
-  if (order.status !== "paid" && order.status !== "shipped") {
+  if (order.status !== "paid" && order.status !== "fulfilled" && order.status !== "shipped") {
     return { ok: false, message: "This order is not eligible yet." };
   }
   if (orderIsFinalSaleOnly(order as Order)) {

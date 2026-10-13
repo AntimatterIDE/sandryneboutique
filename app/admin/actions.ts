@@ -1074,8 +1074,8 @@ export async function markReturnReceived(orderId: string): Promise<ActionResult>
   const supabase = await createPrivilegedClient();
   const { data: order, error } = await supabase.from("orders").select("*").eq("id", orderId).single();
   if (error || !order) return { ok: false, message: "Order not found." };
-  if (isOrderReturned(order)) {
-    return { ok: false, message: "This order was already refunded." };
+  if (isOrderReturned(order) && isOrderInventoryRestocked(order)) {
+    return { ok: false, message: "This item is already back in Heartland inventory." };
   }
 
   const receivedAt = new Date().toISOString();
@@ -1130,7 +1130,9 @@ export async function markReturnReceived(orderId: string): Promise<ActionResult>
   return {
     ok: true,
     message:
-      "Return received. Heartland has the return tender and the item is back in available inventory. Next, refund the item price only — checkout shipping is not refunded.",
+      isOrderReturned(order)
+        ? "The item is back in Heartland inventory. The card was already refunded."
+        : "The item is back in Heartland inventory. Next, refund the item price only — checkout shipping is not refunded.",
   };
 }
 

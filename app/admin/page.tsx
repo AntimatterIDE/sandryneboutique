@@ -27,7 +27,7 @@ export const metadata: Metadata = {
   title: "Dashboard",
 };
 
-const REVENUE_STATUSES: Order["status"][] = ["paid", "shipped"];
+const REVENUE_STATUSES: Order["status"][] = ["paid", "fulfilled", "shipped"];
 
 export default async function AdminDashboardPage() {
   let orders: Order[] = [];
@@ -78,7 +78,7 @@ export default async function AdminDashboardPage() {
     });
   }
 
-  const statusData: StatusPoint[] = (["pending", "paid", "shipped", "cancelled", "returned"] as const).map(
+  const statusData: StatusPoint[] = (["pending", "paid", "fulfilled", "shipped", "cancelled", "returned"] as const).map(
     (status) => ({
       status: status[0].toUpperCase() + status.slice(1),
       count: orders.filter((o) => o.status === status).length,

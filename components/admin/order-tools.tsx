@@ -17,6 +17,7 @@ import { STORE_CONTACT } from "@/lib/constants";
 import type { Order, ShippingAddress } from "@/lib/types";
 import {
   formatPrice,
+  isOrderInventoryRestocked,
   isOrderReturned,
   orderHasFinalSale,
   orderIsFinalSaleOnly,
@@ -184,6 +185,7 @@ export function OrderTools({ order }: { order: Order }) {
   const fullRefund = orderRefundBreakdown(order, { includeFinalSale: true });
   const saleOnly = orderIsFinalSaleOnly(order);
   const hasSale = orderHasFinalSale(order);
+  const restocked = isOrderInventoryRestocked(order);
   const returnRequested = Boolean(order.return_requested_at);
   const returnReceived = Boolean(order.return_received_at);
   const shippedOrder = order.status === "shipped" || Boolean(order.tracking_number);
@@ -238,6 +240,29 @@ export function OrderTools({ order }: { order: Order }) {
                 ? ` Item price only — checkout shipping was not refunded.`
                 : ""}
             </p>
+            {restocked ? (
+              <p className="text-xs text-muted-foreground">
+                The item is back in Heartland inventory.
+              </p>
+            ) : (
+              <Button
+                type="button"
+                disabled={pending}
+                onClick={() => {
+                  if (
+                    !confirm(
+                      "Return the item? This puts it back in Heartland inventory. The card is already refunded, so this does not charge or refund again."
+                    )
+                  ) {
+                    return;
+                  }
+                  run(() => markReturnReceived(order.id));
+                }}
+                className="rounded-none tracking-[0.12em] uppercase text-xs"
+              >
+                Return the item
+              </Button>
+            )}
           </div>
         ) : (
           <div className="space-y-2">
@@ -263,7 +288,7 @@ export function OrderTools({ order }: { order: Order }) {
                 onClick={() => {
                   if (
                     !confirm(
-                      "Mark this return received? Heartland will record the return on the sales order and put the item back in available inventory. Then refund the item price only — not shipping."
+                      "Return the item? Heartland records the return on this sale and puts the item back in inventory. Then refund the item price only — not shipping."
                     )
                   ) {
                     return;
@@ -272,7 +297,7 @@ export function OrderTools({ order }: { order: Order }) {
                 }}
                 className="rounded-none tracking-[0.12em] uppercase text-xs"
               >
-                Mark return received
+                Return the item
               </Button>
             ) : null}
             {returnReceived ? (
