@@ -11,6 +11,7 @@ import {
   isOrderInventoryRestocked,
   isOrderReturned,
   orderHasFinalSale,
+  orderIsFinalSaleOnly,
   orderRefundBreakdown,
   type OrderStatus,
 } from "@/lib/types";
@@ -954,40 +955,11 @@ export async function refundOrder(
     return { ok: false, message: result.message ?? "Refund failed." };
   }
 
-  const restock = await restockOrderInHeartlandAndSite(supabase, order, {
-    refundAmount: remaining,
-    allowOnHandIncrease: !isOrderInventoryRestocked(order),
-  });
-
-  const refundedAt = new Date().toISOString();
-  const { error: refundUpdateError } = await supabase
-    .from("orders")
-    .update({
-      status: "returned",
-      refunded_amount: Math.round((money.alreadyRefunded + remaining) * 100) / 100,
-      refunded_at: refundedAt,
-      heartland_sync_status: "synced",
-      heartland_sync_error: restock.ok ? null : restock.detail.slice(0, 1000),
-      inventory_restocked_at: restock.ok ? refundedAt : undefined,
-    })
-    .eq("id", orderId);
-  if (refundUpdateError) {
-    console.error("Refund update failed; saving returned/cancelled status only:", refundUpdateError);
-    const retry = await supabase.from("orders").update({ status: "returned" }).eq("id", orderId);
-    if (retry.error) {
-      await supabase.from("orders").update({ status: "cancelled" }).eq("id", orderId);
-    }
-  }
-  if (restock.ok) {
-    await markInventoryRestocked(supabase, orderId);
-  }
+  const recorded = await recordOrderRefund(supabase, orderId, money.alreadyRefunded + remaining);
+  if (!recorded.ok) return recorded;
 
   revalidatePath("/admin/orders");
   revalidatePath("/account");
-  revalidatePath("/shop");
-  for (const item of restock.items) {
-    if (item.slug) revalidatePath(`/products/${item.slug}`);
-  }
   try {
     const { sendRefundIssued } = await import("@/lib/email");
     const { data: refundedOrder } = await supabase.from("orders").select("*").eq("id", orderId).single();
@@ -995,18 +967,64 @@ export async function refundOrder(
   } catch (err) {
     console.error("Refund email failed:", err);
   }
-  if (!restock.ok) {
-    return {
-      ok: true,
-      message: `Refunded the item price (${formatPrice(remaining)}). Checkout shipping is not refunded. Heartland stock was not put back: ${restock.detail}`,
-    };
-  }
+  const already = result.message?.toLowerCase().includes("already");
   return {
     ok: true,
-    message: result.message?.toLowerCase().includes("already")
-      ? `Heartland already had a return on this card. The order is now marked refunded and inventory was restocked. Only the item price is refunded.`
-      : `Refunded the item price (${formatPrice(remaining)}). Checkout shipping is not refunded. Inventory was restocked.`,
+    message: already
+      ? `Heartland already refunded this card. The refund button is now closed. Click Item is back when the package is in the store.`
+      : `Refunded the item price (${formatPrice(remaining)}). Checkout shipping is not refunded. Click Item is back when the package is in the store.`,
   };
+}
+
+/** Records a card refund that was already done in Heartland. Does not refund again or restock. */
+export async function markCardAlreadyRefunded(orderId: string): Promise<ActionResult> {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  const supabase = await createPrivilegedClient();
+  const { data: order, error } = await supabase.from("orders").select("*").eq("id", orderId).single();
+  if (error || !order) return { ok: false, message: "Order not found." };
+  if (isOrderReturned(order) || order.status === "cancelled") {
+    return { ok: true, message: "This card is already recorded as refunded." };
+  }
+
+  const money = orderRefundBreakdown(order, {
+    includeFinalSale: orderIsFinalSaleOnly(order),
+  });
+  const amount = money.refundable > 0 ? money.refundable : money.merchandise;
+  const recorded = await recordOrderRefund(supabase, orderId, amount);
+  if (!recorded.ok) return recorded;
+
+  revalidatePath("/admin/orders");
+  revalidatePath("/account");
+  return {
+    ok: true,
+    message: `Recorded as refunded (${formatPrice(amount)}). The card was not charged again. Click Item is back when the package is in the store.`,
+  };
+}
+
+async function recordOrderRefund(
+  supabase: Awaited<ReturnType<typeof createPrivilegedClient>>,
+  orderId: string,
+  amount: number
+): Promise<ActionResult> {
+  const refundedAt = new Date().toISOString();
+  const { error } = await supabase
+    .from("orders")
+    .update({
+      status: "returned",
+      refunded_amount: Math.round(amount * 100) / 100,
+      refunded_at: refundedAt,
+    })
+    .eq("id", orderId);
+  if (error) {
+    console.error("Refund record failed:", error);
+    const retry = await supabase.from("orders").update({ status: "returned" }).eq("id", orderId);
+    if (retry.error) {
+      return { ok: false, message: "The card may be refunded, but the order could not be marked refunded." };
+    }
+  }
+  return { ok: true, message: "Refund recorded." };
 }
 
 async function markInventoryRestocked(
@@ -1158,15 +1176,14 @@ export async function markReturnReceived(orderId: string): Promise<ActionResult>
   if (!restock.ok) {
     return {
       ok: true,
-      message: `Return received, but Heartland was not updated: ${restock.detail} Next, refund the item price only (not shipping).`,
+      message: `The return is noted, but Heartland stock was not updated: ${restock.detail}`,
     };
   }
   return {
     ok: true,
-    message:
-      isOrderReturned(order)
-        ? "The item is back in Heartland inventory. The card was already refunded."
-        : "The item is back in Heartland inventory. Next, refund the item price only — checkout shipping is not refunded.",
+    message: isOrderReturned(order)
+      ? "The item is back in Heartland inventory. The card was already refunded."
+      : "The item is back in Heartland inventory and on the website.",
   };
 }
 

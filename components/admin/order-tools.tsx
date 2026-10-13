@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   buyOrderShippingLabel,
+  markCardAlreadyRefunded,
   markReturnReceived,
   refundOrder,
   retryRetailSync,
@@ -188,8 +189,6 @@ export function OrderTools({ order }: { order: Order }) {
   const restocked = isOrderInventoryRestocked(order);
   const returnRequested = Boolean(order.return_requested_at);
   const returnReceived = Boolean(order.return_received_at);
-  const shippedOrder = order.status === "shipped" || Boolean(order.tracking_number);
-  const waitForReturn = shippedOrder && returnRequested && !returnReceived;
   const hasLabel = Boolean(order.shipping_label_url);
   const hasTracking = Boolean(order.tracking_number);
   const shipped = order.status === "shipped" || hasTracking;
@@ -221,6 +220,21 @@ export function OrderTools({ order }: { order: Order }) {
         <h3 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground mb-2">
           Refund
         </h3>
+        {returnRequested ? (
+          <p className="text-xs text-muted-foreground mb-2">
+            {order.return_note?.trim()
+              ? `Customer asked to exchange this order${
+                  order.return_requested_at
+                    ? ` on ${new Date(order.return_requested_at).toLocaleDateString()}`
+                    : ""
+                }. They want: ${order.return_note.trim()}. They ship the original back. Send the replacement after it arrives. Do not refund unless you cannot make the exchange.`
+              : `Customer requested a return${
+                  order.return_requested_at
+                    ? ` on ${new Date(order.return_requested_at).toLocaleDateString()}`
+                    : ""
+                }. They pay to ship it back. Refund the item price only.`}
+          </p>
+        ) : null}
         {refunded ? (
           <div className="space-y-1">
             <Button
@@ -240,69 +254,9 @@ export function OrderTools({ order }: { order: Order }) {
                 ? ` Item price only — checkout shipping was not refunded.`
                 : ""}
             </p>
-            {restocked ? (
-              <p className="text-xs text-muted-foreground">
-                The item is back in Heartland inventory.
-              </p>
-            ) : (
-              <Button
-                type="button"
-                disabled={pending}
-                onClick={() => {
-                  if (
-                    !confirm(
-                      "Return the item? This puts it back in Heartland inventory. The card is already refunded, so this does not charge or refund again."
-                    )
-                  ) {
-                    return;
-                  }
-                  run(() => markReturnReceived(order.id));
-                }}
-                className="rounded-none tracking-[0.12em] uppercase text-xs"
-              >
-                Return the item
-              </Button>
-            )}
           </div>
         ) : (
           <div className="space-y-2">
-            {returnRequested ? (
-              <p className="text-xs text-muted-foreground">
-                {order.return_note?.trim()
-                  ? `Customer asked to exchange this order${
-                      order.return_requested_at
-                        ? ` on ${new Date(order.return_requested_at).toLocaleDateString()}`
-                        : ""
-                    }. They want: ${order.return_note.trim()}. They ship the original back. Send the replacement after it arrives. Do not refund unless you cannot make the exchange.`
-                  : `Customer requested a return${
-                      order.return_requested_at
-                        ? ` on ${new Date(order.return_requested_at).toLocaleDateString()}`
-                        : ""
-                    }. They pay to ship it back. Refund the item price only.`}
-              </p>
-            ) : null}
-            {returnRequested && !returnReceived ? (
-              <Button
-                type="button"
-                disabled={pending}
-                onClick={() => {
-                  if (
-                    !confirm(
-                      "Return the item? Heartland records the return on this sale and puts the item back in inventory. Then refund the item price only — not shipping."
-                    )
-                  ) {
-                    return;
-                  }
-                  run(() => markReturnReceived(order.id));
-                }}
-                className="rounded-none tracking-[0.12em] uppercase text-xs"
-              >
-                Return the item
-              </Button>
-            ) : null}
-            {returnReceived ? (
-              <p className="text-xs text-muted-foreground">Item received — refund the card.</p>
-            ) : null}
             <Button
               type="button"
               variant="outline"
@@ -310,8 +264,7 @@ export function OrderTools({ order }: { order: Order }) {
                 pending ||
                 !order.heartland_transaction_id ||
                 (money.refundable <= 0 && !saleOnly) ||
-                (saleOnly && fullRefund.refundable <= 0) ||
-                waitForReturn
+                (saleOnly && fullRefund.refundable <= 0)
               }
               onClick={() => {
                 const amount = money.refundable > 0 ? money.refundable : fullRefund.refundable;
@@ -323,7 +276,7 @@ export function OrderTools({ order }: { order: Order }) {
                   : "";
                 if (
                   !confirm(
-                    `Refund ${formatPrice(amount)} — the item price only? Checkout shipping is not refunded. The customer pays to ship the item back.${saleNote}`
+                    `Refund ${formatPrice(amount)} — the item price only? Checkout shipping is not refunded.${saleNote} This does not put the item back in inventory.`
                   )
                 ) {
                   return;
@@ -338,11 +291,24 @@ export function OrderTools({ order }: { order: Order }) {
                   ? `Refund anyway ${formatPrice(fullRefund.refundable)}`
                   : `Refund ${formatPrice(money.refundable)}`}
             </Button>
-            {waitForReturn ? (
-              <p className="text-xs text-muted-foreground">
-                Wait until the return arrives, then mark it received before refunding.
-              </p>
-            ) : saleOnly ? (
+            <button
+              type="button"
+              disabled={pending || !order.heartland_transaction_id}
+              onClick={() => {
+                if (
+                  !confirm(
+                    `Record Heartland transaction ${order.heartland_transaction_id} as already refunded? This does not refund the card again. The refund button will close.`
+                  )
+                ) {
+                  return;
+                }
+                run(() => markCardAlreadyRefunded(order.id));
+              }}
+              className="block text-left text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground disabled:opacity-50"
+            >
+              I already refunded this card in Heartland
+            </button>
+            {saleOnly ? (
               <p className="text-xs text-muted-foreground">
                 Sale items are final sale. Customer returns are blocked.
               </p>
@@ -355,6 +321,48 @@ export function OrderTools({ order }: { order: Order }) {
           </div>
         )}
       </div>
+
+      {order.status !== "cancelled" && order.status !== "pending" ? (
+        <div>
+          <h3 className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground mb-2">
+            Item back
+          </h3>
+          {restocked ? (
+            <p className="text-xs text-muted-foreground">
+              The item is back in Heartland inventory
+              {order.inventory_restocked_at
+                ? ` as of ${new Date(order.inventory_restocked_at).toLocaleDateString()}`
+                : ""}
+              . The website stock matches that count.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              <Button
+                type="button"
+                disabled={pending}
+                onClick={() => {
+                  if (
+                    !confirm(
+                      "The item is in the store? This adds it back to Heartland inventory and the website. It does not refund the card."
+                    )
+                  ) {
+                    return;
+                  }
+                  run(() => markReturnReceived(order.id));
+                }}
+                className="rounded-none tracking-[0.12em] uppercase text-xs"
+              >
+                Item is back
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                {returnReceived
+                  ? "Marked received, but Heartland stock was not updated. Click again when the item is in the store."
+                  : "Click this only after the package is in the store. That is what puts it back in inventory."}
+              </p>
+            </div>
+          )}
+        </div>
+      ) : null}
 
       {!order.heartland_sales_order_id && order.status !== "cancelled" && !refunded ? (
         <div>
